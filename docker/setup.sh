@@ -42,7 +42,7 @@ EXISTING_DISCORD_ALLOWED_USERS=""
 EXISTING_DISCORD_FREE_RESPONSE_CHANNELS=""
 
 if [[ -f .env && "$ANDROID_ONLY" == "false" ]]; then
-    _envval() { grep "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r'; }
+    _envval() { grep "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true; }
     EXISTING_ANTHROPIC_API_KEY=$(_envval ANTHROPIC_API_KEY)
     EXISTING_ZAP_API_KEY=$(_envval ZAP_API_KEY)
     EXISTING_MOBSF_API_KEY=$(_envval MOBSF_API_KEY)
