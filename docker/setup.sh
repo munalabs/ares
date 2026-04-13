@@ -544,13 +544,24 @@ if [[ -z "$SC_BUILT" ]]; then
         -v ares_swarmclaw-npm:/root/.npm-global \
         -e npm_config_prefix=/root/.npm-global \
         -e PATH=/root/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-        -e NODE_OPTIONS=--max-old-space-size=2048 \
+        -e NODE_OPTIONS=--max-old-space-size=3072 \
         node:22 \
         sh -c '
             export PATH=/root/.npm-global/bin:$PATH
+            # Install if not already present
             if ! command -v swarmclaw >/dev/null 2>&1; then
                 npm install -g @swarmclawai/swarmclaw --quiet --no-progress || exit 1
             fi
+            # Patch missing @types/dagre — bug in @swarmclawai/swarmclaw package
+            # Without it the Next.js TypeScript build fails with "implicitly has any type"
+            SC_MOD=/root/.npm-global/lib/node_modules/@swarmclawai/swarmclaw
+            DAGRE_TYPES="$SC_MOD/node_modules/@types/dagre"
+            if [ ! -f "$DAGRE_TYPES/index.d.ts" ]; then
+                mkdir -p "$DAGRE_TYPES"
+                printf "declare module '\''dagre'\'';\n" > "$DAGRE_TYPES/index.d.ts"
+            fi
+            # Clear stale lock if any
+            rm -f /root/.swarmclaw/builds/*/\.next/lock 2>/dev/null || true
             swarmclaw server --build
         ' \
         && success "SwarmClaw pre-built" \
