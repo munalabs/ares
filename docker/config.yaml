@@ -4,7 +4,7 @@
 #
 # Key differences from bare-metal:
 #   - docker_image: ares-tools:latest (pre-built, no runtime installs)
-#   - MCP paths: /opt/pentest-ai/ and /opt/iris/ (baked into ares-hermes)
+#   - MCP paths: /opt/pentest-ai/ and /opt/mcp/ (baked into ares-hermes)
 #   - ZAP is NOT a fixed service — spawned per engagement in Phase 0
 #     ZAP_URL is written to /tmp/engagement.env by the agent at session start
 #   - MoBSF reached via 172.17.0.1:8100 (Docker bridge)
@@ -103,7 +103,7 @@ mcp_servers:
   mobsf:
     command: /usr/bin/python3
     args:
-      - /opt/iris/mobsf.py
+      - /opt/mcp/mobsf.py
     env:
       MOBSF_URL: "http://172.17.0.1:8100"
       MOBSF_API_KEY: "${MOBSF_API_KEY}"
@@ -112,7 +112,7 @@ mcp_servers:
   adb:
     command: /usr/bin/python3
     args:
-      - /opt/iris/adb.py
+      - /opt/mcp/adb.py
     env:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
@@ -125,7 +125,7 @@ mcp_servers:
   frida:
     command: /usr/bin/python3
     args:
-      - /opt/iris/frida.py
+      - /opt/mcp/frida.py
     env:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
@@ -133,5 +133,5 @@ mcp_servers:
       ANDROID_ADB_SERVER_PORT: "5037"
       # FRIDA_SERVER_ARCH: x86_64 — Linux Docker emulator, Intel Mac AVD
       #                   arm64  — Apple Silicon AVD (M1/M2/M3/M4), most physical phones
-      FRIDA_SERVER_PATH: "/opt/iris/frida-server/frida-server-android-${FRIDA_SERVER_ARCH:-x86_64}"
+      FRIDA_SERVER_PATH: "/opt/mcp/frida-server/frida-server-android-${FRIDA_SERVER_ARCH:-x86_64}"
       FRIDA_DEVICE: "${ADB_SERIAL:-localhost:5555}"

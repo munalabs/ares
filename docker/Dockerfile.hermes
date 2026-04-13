@@ -46,20 +46,21 @@ RUN HERMES_BIN="/root/.hermes/hermes-agent/hermes"; \
 RUN git clone --depth 1 https://github.com/0xSteph/pentest-ai.git /opt/pentest-ai \
     && pip3 install -e /opt/pentest-ai --break-system-packages
 
-# ── Iris MCP servers (MoBSF + ADB + Frida) ───────────────────────────────────
+# ── MCP servers (MoBSF + ADB + Frida) ────────────────────────────────────────
+# Copied directly from mcp/ in the repo — no external dependency.
 # frida-server version must match the frida Python package exactly.
 # Both arm64 (Apple Silicon AVDs, physical phones) and x86_64 (Linux Docker emulator,
 # Intel AVDs) are bundled so the image works on any host without a rebuild.
 # The active binary is selected at runtime via FRIDA_SERVER_ARCH (default: x86_64).
-RUN git clone --depth 1 https://github.com/munalabs/iris.git /opt/iris \
-    && pip3 install fastmcp httpx frida frida-tools --break-system-packages \
+COPY mcp/ /opt/mcp/
+RUN pip3 install fastmcp httpx frida frida-tools --break-system-packages \
     && FRIDA_VERSION=$(pip3 show frida | grep ^Version | awk '{print $2}') \
-    && mkdir -p /opt/iris/frida-server \
+    && mkdir -p /opt/mcp/frida-server \
     && for ARCH in x86_64 arm64; do \
          curl -fsSL "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-${ARCH}.xz" \
-           | xz -d > "/opt/iris/frida-server/frida-server-android-${ARCH}"; \
+           | xz -d > "/opt/mcp/frida-server/frida-server-android-${ARCH}"; \
        done \
-    && chmod +x /opt/iris/frida-server/frida-server-android-*
+    && chmod +x /opt/mcp/frida-server/frida-server-android-*
 
 # ── Playwright MCP ────────────────────────────────────────────────────────────
 RUN npm install -g @playwright/mcp@latest \
