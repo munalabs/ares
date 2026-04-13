@@ -43,6 +43,8 @@ services:
       - "${SWARMCLAW_PORT:-3456}:3456"
     environment:
       HERMES_API_URL: "http://hermes:8643"
+      # Passed to seed script so it can encrypt + store the Hermes API key credential
+      HERMES_API_KEY: "${HERMES_API_KEY:-}"
     volumes:
       - swarmclaw-data:/root/.swarmclaw
       - swarmclaw-npm:/root/.npm-global
@@ -60,6 +62,10 @@ services:
     env_file: .env
     environment:
       HERMES_HOME: /root/.hermes/profiles/pentest
+      # Bind to all interfaces so SwarmClaw (on the compose network) can reach this container.
+      # Requires API_SERVER_KEY — hermes refuses 0.0.0.0 without auth.
+      API_SERVER_HOST: "0.0.0.0"
+      API_SERVER_KEY: "${HERMES_API_KEY:-}"
       # ADB host bridge — connects the adb client inside this container to the
       # ADB server running on the host machine. The host server manages:
       #   - USB-connected phones (plug phone into host, authorize once)

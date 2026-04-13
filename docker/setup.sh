@@ -35,6 +35,7 @@ fi
 # keys that are already configured and don't regenerate secrets unnecessarily.
 EXISTING_ANTHROPIC_API_KEY=""
 EXISTING_ZAP_API_KEY=""
+EXISTING_HERMES_API_KEY=""
 EXISTING_MOBSF_API_KEY=""
 EXISTING_PENTEST_OUTPUT=""
 EXISTING_DISCORD_BOT_TOKEN=""
@@ -45,6 +46,7 @@ if [[ -f .env && "$ANDROID_ONLY" == "false" ]]; then
     _envval() { grep "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true; }
     EXISTING_ANTHROPIC_API_KEY=$(_envval ANTHROPIC_API_KEY)
     EXISTING_ZAP_API_KEY=$(_envval ZAP_API_KEY)
+    EXISTING_HERMES_API_KEY=$(_envval HERMES_API_KEY)
     EXISTING_MOBSF_API_KEY=$(_envval MOBSF_API_KEY)
     EXISTING_PENTEST_OUTPUT=$(_envval PENTEST_OUTPUT)
     EXISTING_DISCORD_BOT_TOKEN=$(_envval DISCORD_BOT_TOKEN)
@@ -427,6 +429,14 @@ else
     success "ZAP API key generated"
 fi
 
+if [[ -n "$EXISTING_HERMES_API_KEY" ]]; then
+    HERMES_API_KEY="$EXISTING_HERMES_API_KEY"
+    success "Hermes API key (reusing existing)"
+else
+    HERMES_API_KEY="$(openssl rand -hex 32)"
+    success "Hermes API key generated"
+fi
+
 # ── Resolve MoBSF API key BEFORE writing .env ─────────────────────────────────
 # MoBSF generates its key internally on first start. We need it before writing
 # .env so we can write the final key directly (no pending → patch dance).
@@ -496,12 +506,14 @@ ENVEOF
 {
     printf '\nANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY"
     printf 'HERMES_STREAM_STALE_TIMEOUT=900\n'
+    printf 'GATEWAY_ALLOW_ALL_USERS=true\n'
     if [[ "$DISCORD_ENABLE" =~ ^[Yy]$ ]]; then
         printf '\nDISCORD_BOT_TOKEN=%s\n'                 "$DISCORD_BOT_TOKEN"
         printf 'DISCORD_ALLOWED_USERS=%s\n'               "$DISCORD_ALLOWED_USERS"
         printf 'DISCORD_FREE_RESPONSE_CHANNELS=%s\n'      "$DISCORD_FREE_RESPONSE_CHANNELS"
     fi
-    printf '\nZAP_API_KEY=%s\n'        "$ZAP_API_KEY"
+    printf '\nZAP_API_KEY=%s\n'         "$ZAP_API_KEY"
+    printf 'HERMES_API_KEY=%s\n'       "$HERMES_API_KEY"
     printf 'MOBSF_API_KEY=%s\n'        "$MOBSF_API_KEY"
     printf '\nPENTEST_OUTPUT=%s\n'     "$PENTEST_OUTPUT"
     if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
@@ -628,7 +640,10 @@ if [[ "$SWARMCLAW_READY" == "true" ]]; then
     info "Seeding SwarmClaw config..."
     sleep 3  # let DB migrations complete
     docker cp swarmclaw-seed.js ares-swarmclaw:/tmp/swarmclaw-seed.js
-    if docker exec -e HERMES_API_URL="http://hermes:8643" ares-swarmclaw \
+    if docker exec \
+        -e HERMES_API_URL="http://hermes:8643" \
+        -e HERMES_API_KEY="$HERMES_API_KEY" \
+        ares-swarmclaw \
         node /tmp/swarmclaw-seed.js; then
         success "SwarmClaw seeded — Ares Pentest agent ready"
     else
