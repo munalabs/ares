@@ -24,7 +24,7 @@ services:
   # For personal use: set DISCORD_BOT_TOKEN in .env (gateway connects to Discord).
   # For team/local use: leave DISCORD_BOT_TOKEN unset (HTTP API only, no Discord).
   swarmclaw:
-    image: node:22-slim
+    image: node:22
     container_name: ares-swarmclaw
     restart: unless-stopped
     # npm global dir is persisted in swarmclaw-npm volume.
