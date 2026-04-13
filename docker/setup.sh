@@ -465,19 +465,19 @@ else
     fi
     success "MoBSF healthy"
 
-    # Extract the key MoBSF generated internally.
-    # Use perl instead of grep -oP — GNU-only, fails on macOS.
-    # Capture only hex characters directly in the regex ([0-9a-fA-F]+) so no
-    # invisible bytes (\r, control chars) can sneak in from Docker log output.
-    MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
-        | perl -ne 'print "$1\n" if /REST API Key:\s*([0-9a-fA-F]+)/i' | tail -1)
-    if [[ -z "$MOBSF_API_KEY" ]]; then
-        MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
-            | perl -ne 'print "$1\n" if /Api Key\s*:\s*([0-9a-fA-F]+)/i' | tail -1)
-    fi
-    [[ -n "$MOBSF_API_KEY" ]] || die "Could not extract MoBSF API key. Run: docker logs ares-mobsf"
-    [[ ${#MOBSF_API_KEY} -ge 32 ]] \
-        || die "MoBSF key looks too short (${#MOBSF_API_KEY} chars): $MOBSF_API_KEY"
+    # MoBSF derives its REST API key as sha256(secret_file_contents).
+    # Read and compute directly inside the container — no log parsing needed.
+    MOBSF_API_KEY=$(docker exec ares-mobsf python3 -c "
+import hashlib, sys
+try:
+    secret = open('/home/mobsf/.MobSF/secret').read().strip()
+    print(hashlib.sha256(secret.encode('utf-8')).hexdigest())
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null) || true
+    [[ -n "$MOBSF_API_KEY" ]] || die "Could not derive MoBSF API key from container. Run: docker exec ares-mobsf cat /home/mobsf/.MobSF/secret"
+    [[ ${#MOBSF_API_KEY} -eq 64 ]] \
+        || die "MoBSF key unexpected length (${#MOBSF_API_KEY} chars): $MOBSF_API_KEY"
     success "MoBSF API key extracted"
 fi
 
