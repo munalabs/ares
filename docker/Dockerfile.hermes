@@ -22,7 +22,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Hermes Agent ──────────────────────────────────────────────────────────────
-RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+# Download script separately so we can pass CONFIGURE=false — the installer
+# ends with a setup wizard that opens /dev/tty, which doesn't exist in docker
+# build context and causes exit code 1. CONFIGURE=false skips the wizard.
+RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
+        -o /tmp/hermes-install.sh \
+    && CONFIGURE=false bash /tmp/hermes-install.sh \
+    && rm /tmp/hermes-install.sh
 
 # Fix shebang — installer may resolve to system python3, missing venv deps
 RUN HERMES_BIN="/root/.hermes/hermes-agent/hermes"; \
