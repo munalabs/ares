@@ -429,6 +429,10 @@ success "Images built"
 # ── Start MoBSF first to extract its API key ──────────────────────────────────
 
 info "Starting MoBSF to generate its API key..."
+# MoBSF runs as uid 9901. Named volumes are created root-owned by default,
+# which causes MOBSF_HOME=None and an immediate crash. Fix ownership first.
+docker volume create ares_mobsf-data 2>/dev/null || true
+docker run --rm -v ares_mobsf-data:/data alpine chown -R 9901:9901 /data
 docker compose --project-name ares up -d mobsf
 
 echo -n "  Waiting for MoBSF to become healthy"
