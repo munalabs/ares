@@ -51,6 +51,16 @@ services:
     depends_on:
       - hermes
 
+  # ── ares-tools — terminal image spawned per engagement by Hermes ─────────
+  # Not a running service — built here so `docker compose build` produces it.
+  # Hermes spawns containers from this image at runtime via Docker socket.
+  ares-tools:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tools
+    image: ares-tools:latest
+    profiles: [build-only]   # never started by `docker compose up`
+
   # ── Hermes + all MCP servers ──────────────────────────────────────────────
   hermes:
     build:
@@ -69,6 +79,11 @@ services:
       API_SERVER_HOST: "0.0.0.0"
       API_SERVER_KEY: "${HERMES_API_KEY:-}"
       HERMES_WEB_PORT: "${HERMES_WEB_PORT:-9119}"
+      # Override docker_volumes from config.yaml — compose expands ${PENTEST_OUTPUT} here,
+      # whereas config.yaml bash-style ${VAR:-default} syntax is NOT expanded by Hermes.
+      TERMINAL_DOCKER_VOLUMES: >-
+        ["${PENTEST_OUTPUT:-${HOME}/ares-pentest-output}:/pentest-output",
+         "${PENTEST_OUTPUT:-${HOME}/ares-pentest-output}:/home/user/pentest-output"]
       # ADB host bridge — connects the adb client inside this container to the
       # ADB server running on the host machine. The host server manages:
       #   - USB-connected phones (plug phone into host, authorize once)

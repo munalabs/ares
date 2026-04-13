@@ -534,7 +534,8 @@ success ".env written (mode 600)"
 
 echo
 info "Building ares-hermes and ares-tools images (this takes a few minutes)..."
-docker compose --project-name ares build
+docker compose --project-name ares build hermes
+docker build -f Dockerfile.tools -t ares-tools:latest ..
 success "Images built"
 
 # ── Pre-build SwarmClaw ───────────────────────────────────────────────────────
