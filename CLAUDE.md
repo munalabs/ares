@@ -1,10 +1,13 @@
-# CLAUDE.md — Deploy Ares Pentest Profile
+# CLAUDE.md — Deploy Ares Pentest Stack
 
 ## Your Mission
 
-Install the Ares pentest profile on a target machine running Hermes Agent v0.8.0+.
+Deploy a complete Hermes-based pentest workstation from a fresh Ubuntu Server 24.04 LTS machine.
 Execute commands remotely via SSH. Stop ONLY at HUMAN ACTION steps.
 Run verification after every phase. Fix failures without asking — retry up to 3 times, then report.
+
+**This guide covers everything** — from bare OS to a working pentest agent with Discord interface.
+If Hermes is already installed, skip to PHASE 5 (Ares tools).
 
 ## SSH Pattern
 
@@ -21,28 +24,31 @@ ENDSSH
 sshpass -p 'PASSWORD' ssh -o StrictHostKeyChecking=no USER@HOST "command"
 ```
 
-Ask the user for HOST, USER, and PASSWORD if not provided. This deployment requires:
-- Hermes Agent v0.8.0+ already installed (`hermes version`)
-- Docker running (`docker ps`)
-- Go toolchain (`go version`)
-- ~5GB free disk space
+Ask the user for HOST, USER, and PASSWORD if not provided.
+Minimum hardware: 4 cores, 8GB RAM, 50GB disk, Ubuntu 22.04+.
 
 ---
 
-## PHASE 0: Preflight
+## PHASE 0: Preflight Check
+
+First, detect what's already installed to skip phases that aren't needed:
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
 echo "=== PREFLIGHT ==="
-hermes version || { echo "ERROR: Hermes not installed"; exit 1; }
-docker ps > /dev/null || { echo "ERROR: Docker not running"; exit 1; }
-go version || { echo "ERROR: Go not installed"; exit 1; }
+echo -n "Hermes: "; hermes version 2>/dev/null || echo "NOT INSTALLED"
+echo -n "Docker: "; docker --version 2>/dev/null || echo "NOT INSTALLED"
+echo -n "Go: "; go version 2>/dev/null || echo "NOT INSTALLED"
+echo -n "Node: "; node --version 2>/dev/null || echo "NOT INSTALLED"
+echo -n "nuclei: "; command -v nuclei >/dev/null 2>&1 && echo "OK" || echo "NOT INSTALLED"
+echo -n "ZAP: "; docker ps 2>/dev/null | grep -q owasp-zap && echo "running" || echo "NOT RUNNING"
+echo -n "MoBSF: "; docker ps 2>/dev/null | grep -q mobsf && echo "running" || echo "NOT RUNNING"
 df -h / | awk 'NR==2{print "Disk free:", $4}'
-echo "=== OK ==="
+echo "=== DONE ==="
 ENDSSH
 ```
 
-If any check fails, stop and tell the user what's missing.
+Tell the user what was found and which phases you'll skip.
 
 ---
 
@@ -52,7 +58,201 @@ If any check fails, stop and tell the user what's missing.
 ssh USER@HOST << 'ENDSSH'
 sudo apt-get update -qq
 sudo apt-get install -y \
-  nmap nikto acl xz-utils android-sdk-platform-tools 2>/dev/null || \
+  git curl wget unzip build-essential \
+  python3 python3-pip python3-venv \
+  ca-certificates gnupg lsb-release \
+  jq acl xz-utils software-properties-common \
+  nmap nikto android-sdk-platform-tools 2>/dev/null || \
+  sudo apt-get install -y nmap nikto acl xz-utils adb
+
+# Node.js 22
+if ! command -v node >/dev/null 2>&1; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+  sudo npm install -g pnpm
+fi
+
+# Docker
+if ! command -v docker >/dev/null 2>&1; then
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker $USER
+  echo "NOTE: Log out and back in (or run 'newgrp docker') before continuing."
+fi
+ENDSSH
+```
+
+**HUMAN ACTION #1 (if Docker was just installed):** Run `newgrp docker` on the machine, or log out and back in.
+
+---
+
+## PHASE 2: Go Toolchain
+
+```bash
+ssh USER@HOST << 'ENDSSH'
+if ! command -v go >/dev/null 2>&1; then
+  wget -qO- https://go.dev/dl/go1.23.2.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
+  echo 'export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"' >> ~/.bashrc
+  echo "Go installed."
+fi
+export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
+go version
+ENDSSH
+```
+
+---
+
+## PHASE 3: Claude Code + Anthropic Auth
+
+Hermes uses Claude Code's OAuth token for Anthropic API access.
+
+```bash
+ssh USER@HOST << 'ENDSSH'
+if ! command -v claude >/dev/null 2>&1; then
+  curl -fsSL https://raw.githubusercontent.com/anthropics/claude-code/main/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+claude --version
+ENDSSH
+```
+
+**HUMAN ACTION #2:** Run `claude login` on the target machine. It will print a URL — open it in a browser and authenticate with your Anthropic account. This stores an OAuth token that funds all API calls.
+
+```bash
+# Verify token was saved
+ssh USER@HOST "python3 -c \"
+import json, pathlib, sys
+creds = pathlib.Path.home() / '.claude' / '.credentials.json'
+if creds.exists():
+    d = json.loads(creds.read_text())
+    for acct in d.get('accounts', {}).values():
+        for k in ['token','oauthToken','oauth_token']:
+            if k in acct:
+                t = acct[k]
+                print(f'Token: {t[:15]}...')
+                sys.exit(0)
+print('ERROR: token not found')
+\""
+```
+
+Should print `Token: sk-ant-oat01-...`
+
+---
+
+## PHASE 4: Hermes Agent
+
+```bash
+ssh USER@HOST << 'ENDSSH'
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v hermes >/dev/null 2>&1; then
+  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+
+  # Fix shebang if needed (installer sometimes uses system python3, missing venv deps)
+  HERMES_BIN="$HOME/.hermes/hermes-agent/hermes"
+  VENV_PY="$HOME/.hermes/hermes-agent/venv/bin/python3"
+  if head -1 "$HERMES_BIN" | grep -q '/usr/bin/env python3'; then
+    sed -i "1s|.*|#!${VENV_PY}|" "$HERMES_BIN"
+    echo "Fixed hermes shebang."
+  fi
+  ln -sf "$HERMES_BIN" "$HOME/.local/bin/hermes"
+fi
+hermes version
+ENDSSH
+```
+
+VERIFY: `ssh USER@HOST 'hermes version'` shows v0.8.0+
+
+---
+
+## PHASE 4b: Hermes Base Configuration
+
+**HUMAN ACTION #3:** Provide your API keys:
+1. **Google AI Studio** — https://aistudio.google.com/apikey (used for compression + delegation, much cheaper than Opus)
+2. **Groq** — https://console.groq.com/keys (free tier, used for memory extraction)
+
+```bash
+GOOGLE_API_KEY="KEY_HERE"
+GROQ_API_KEY="KEY_HERE"
+
+# Extract OAuth token from Claude Code credentials
+ANTHROPIC_TOKEN=$(ssh USER@HOST "python3 -c \"
+import json, pathlib, sys
+creds = pathlib.Path.home() / '.claude' / '.credentials.json'
+d = json.loads(creds.read_text())
+for acct in d.get('accounts', {}).values():
+    for k in ['token','oauthToken','oauth_token']:
+        if k in acct:
+            print(acct[k]); sys.exit(0)
+print('NOT_FOUND')
+\"")
+
+ssh USER@HOST "
+mkdir -p ~/.hermes
+cat > ~/.hermes/.env << EOF
+ANTHROPIC_API_KEY=$ANTHROPIC_TOKEN
+GOOGLE_API_KEY=$GOOGLE_API_KEY
+GROQ_API_KEY=$GROQ_API_KEY
+EOF
+chmod 600 ~/.hermes/.env
+
+mkdir -p ~/.hermes/memories
+cat > ~/.hermes/config.yaml << 'YAML'
+model:
+  default: claude-sonnet-4-6
+  provider: anthropic
+
+smart_model_routing:
+  enabled: true
+  max_simple_chars: 160
+  max_simple_words: 28
+  cheap_model:
+    provider: google
+    model: gemini-2.5-flash
+
+compression:
+  enabled: true
+  threshold: 0.50
+  target_ratio: 0.20
+  protect_last_n: 20
+  summary_model: gemini-2.5-flash
+  summary_provider: google
+
+terminal:
+  backend: docker
+  docker_image: nikolaik/python-nodejs:python3.11-nodejs20
+  container_cpu: 2
+  container_memory: 8192
+  container_persistent: true
+
+security:
+  tirith_enabled: true
+  tirith_fail_open: false
+YAML
+echo 'Hermes configured.'
+"
+```
+
+VERIFY:
+```bash
+ssh USER@HOST "
+source ~/.hermes/.env
+curl -s https://api.anthropic.com/v1/messages \
+  -H 'Authorization: Bearer \$ANTHROPIC_API_KEY' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'content-type: application/json' \
+  -H 'user-agent: claude-cli/1.0 (external, cli)' \
+  -H 'x-app: cli' \
+  -d '{\"model\":\"claude-haiku-4-5-20251001\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"say OK\"}]}' \
+  | python3 -c \"import sys,json; print('Anthropic:', json.load(sys.stdin)['content'][0]['text'])\"
+"
+```
+
+---
+
+## PHASE 5: Pentest System Tools
+
+```bash
+ssh USER@HOST << 'ENDSSH'
+sudo apt-get install -y nmap nikto acl xz-utils android-sdk-platform-tools 2>/dev/null || \
   sudo apt-get install -y nmap nikto acl xz-utils adb
 
 # Python tools
@@ -65,7 +265,7 @@ VERIFY: `ssh USER@HOST "command -v nmap && command -v sqlmap && echo OK"`
 
 ---
 
-## PHASE 2: Go Security Tools
+## PHASE 6: Go Security Tools
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -84,7 +284,7 @@ VERIFY: `ssh USER@HOST "export PATH=\$HOME/go/bin:\$PATH && nuclei -version 2>&1
 
 ---
 
-## PHASE 3: testssl.sh + Wordlists
+## PHASE 7: testssl.sh + Wordlists
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -114,7 +314,7 @@ ENDSSH
 
 ---
 
-## PHASE 4: Playwright
+## PHASE 8: Playwright
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -127,7 +327,7 @@ ENDSSH
 
 ---
 
-## PHASE 5: pentest-ai
+## PHASE 9: pentest-ai
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -172,7 +372,7 @@ VERIFY: `ssh USER@HOST "/usr/bin/python3 -c 'import aiosqlite, fastmcp; print(\"
 
 ---
 
-## PHASE 6: OWASP ZAP
+## PHASE 10: OWASP ZAP
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -215,7 +415,7 @@ ssh USER@HOST 'source ~/.hermes/.env && curl -s "http://localhost:8090/JSON/core
 
 ---
 
-## PHASE 7: MoBSF
+## PHASE 11: MoBSF
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -253,7 +453,7 @@ Should return `200`.
 
 ---
 
-## PHASE 8: Iris (Mobile MCP Stack)
+## PHASE 12: Iris (Mobile MCP Stack)
 
 Iris provides three FastMCP servers: MoBSF, ADB, and Frida.
 
@@ -297,7 +497,7 @@ ENDSSH
 
 ---
 
-## PHASE 9: Output Directory
+## PHASE 13: Output Directory
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -320,7 +520,7 @@ ENDSSH
 
 ---
 
-## PHASE 10: Profile Installation
+## PHASE 14: Profile Installation
 
 Clone the repo on the target and install the profile files:
 
@@ -352,9 +552,9 @@ ENDSSH
 
 ---
 
-## PHASE 11: Profile .env
+## PHASE 15: Profile .env
 
-**HUMAN ACTION #1:** Provide the following values:
+**HUMAN ACTION #4:** Provide the following values:
 1. **DISCORD_BOT_TOKEN** — bot token for a *separate* Discord application (not your default Hermes bot). Create at https://discord.com/developers/applications.
 2. **DISCORD_ALLOWED_USERS** — your Discord user ID (right-click your profile → Copy User ID)
 3. **DISCORD_FREE_RESPONSE_CHANNELS** — the forum channel ID where engagements will run
@@ -385,7 +585,7 @@ echo 'Profile .env written.'
 
 ---
 
-## PHASE 12: Gateway
+## PHASE 16: Gateway
 
 ```bash
 ssh USER@HOST 'HERMES_HOME=~/.hermes/profiles/pentest hermes gateway install'
@@ -409,11 +609,11 @@ systemctl --user is-active hermes-gateway-pentest
 VERIFY: `ssh USER@HOST 'tail -5 ~/.hermes/profiles/pentest/logs/gateway.log'`
 Should show: `✓ discord connected as YourBotName#XXXX`
 
-**HUMAN ACTION #2:** Send a message in the pentest forum channel. Confirm the bot responds.
+**HUMAN ACTION #5:** Send a message in the pentest forum channel. Confirm the bot responds.
 
 ---
 
-## PHASE 13: Full Verification
+## PHASE 17: Full Verification
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -465,7 +665,7 @@ ENDSSH
 
 ---
 
-## PHASE 14: Smoke Test (Optional)
+## PHASE 18: Smoke Test (Optional)
 
 Test with OWASP Juice Shop — a deliberately vulnerable app:
 
@@ -475,7 +675,7 @@ sleep 15
 ssh USER@HOST 'curl -s -o /dev/null -w "%{http_code}" http://localhost:3001'
 ```
 
-**HUMAN ACTION #3:** In the pentest forum channel, create a new thread and send:
+**HUMAN ACTION #6:** In the pentest forum channel, create a new thread and send:
 
 ```
 Full web app assessment on http://localhost:3001
@@ -495,16 +695,19 @@ Cleanup: `ssh USER@HOST 'docker stop juice-shop'`
 
 | # | Phase | Action |
 |---|-------|--------|
-| 1 | 11 | Provide Discord bot token, user ID, forum channel ID |
-| 2 | 12 | Confirm pentest bot responds in Discord |
-| 3 | 14 | Run Juice Shop smoke test (optional) |
+| 1 | 1 | Run `newgrp docker` if Docker was just installed |
+| 2 | 3 | Run `claude login` → complete browser OAuth |
+| 3 | 4b | Provide Google AI Studio + Groq API keys |
+| 4 | 15 | Provide Discord bot token, user ID, forum channel ID |
+| 5 | 16 | Confirm pentest bot responds in Discord |
+| 6 | 18 | Run Juice Shop smoke test (optional) |
 
 ---
 
 ## Troubleshooting
 
 **Gateway fails to start — missing env vars:**
-The service unit needs `EnvironmentFile`. Check Phase 12 patching step.
+The service unit needs `EnvironmentFile`. Check Phase 16 patching step.
 `journalctl --user -u hermes-gateway-pentest -n 30`
 
 **pentest-ai MCP times out silently:**
@@ -518,7 +721,7 @@ Use `ZAP_CONTAINER_IP` (the Docker bridge IP), not `localhost:8090`.
 **Files written to /pentest-output not found by gateway:**
 Check symlinks: `ls -la /pentest-output` and `ls -la /home/user/pentest-output`
 Check ACLs: `getfacl ~/pentest-output`
-Check volumes in `config.yaml` have YOURUSER replaced with actual username.
+Check volumes in `config.yaml` have YOURUSER replaced with actual username (done automatically in Phase 14).
 
 **MoBSF crashes immediately:**
 Data dir must be owned by uid 9901: `sudo chown -R 9901:9901 ~/services/mobsf`
