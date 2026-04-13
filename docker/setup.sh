@@ -2,6 +2,10 @@
 # Ares — Docker Compose setup script
 # Builds images, generates secrets, starts the stack, extracts MoBSF API key.
 # Run from the docker/ directory:  cd docker && ./setup.sh
+#
+# Flags:
+#   --android   Reconfigure Android testing only (stack must already be running).
+#               Updates .env and restarts the hermes container. Skips everything else.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,70 +17,85 @@ success() { echo -e "${GREEN}✓${NC} $*"; }
 warn()    { echo -e "${YELLOW}!${NC} $*" >&2; }
 die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 
+# ── --android mode: reconfigure Android on an already-running stack ───────────
+
+if [[ "${1:-}" == "--android" ]]; then
+    [[ -f .env ]] || die ".env not found — run setup.sh without --android first."
+    docker inspect ares-hermes >/dev/null 2>&1 \
+        || die "ares-hermes container not running — start the stack first."
+    info "Android-only reconfiguration (existing stack)"
+    # Fall through to Android section; skip all other sections via ANDROID_ONLY flag
+    ANDROID_ONLY=true
+else
+    ANDROID_ONLY=false
+fi
+
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 
 [[ $EUID -eq 0 ]] && die "Do not run setup.sh as root. Run as a normal user with Docker access."
 
-info "Checking prerequisites..."
-command -v docker  >/dev/null 2>&1 || die "Docker not found. Install from https://docs.docker.com/engine/install/"
-command -v openssl >/dev/null 2>&1 || die "openssl not found."
-if ! docker info >/dev/null 2>&1; then
-    die "Docker not accessible as $USER.
+if [[ "$ANDROID_ONLY" == "false" ]]; then
+    info "Checking prerequisites..."
+    command -v docker  >/dev/null 2>&1 || die "Docker not found. Install from https://docs.docker.com/engine/install/"
+    command -v openssl >/dev/null 2>&1 || die "openssl not found."
+    if ! docker info >/dev/null 2>&1; then
+        die "Docker not accessible as $USER.
   Add yourself to the docker group and re-login:
     sudo usermod -aG docker \$USER
     newgrp docker          # or log out and back in
   Then re-run this script."
+    fi
+    docker compose version >/dev/null 2>&1 || die "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
+    success "Prerequisites OK (running as $USER)"
 fi
-docker compose version >/dev/null 2>&1 || die "Docker Compose v2 not found. Update Docker Desktop or install the compose plugin."
-success "Prerequisites OK (running as $USER)"
 
 # ── Anthropic token ───────────────────────────────────────────────────────────
 
-echo
-echo "Ares requires an Anthropic OAuth token (sk-ant-oat01-...) or API key (sk-ant-api03-)."
-echo "Get one via 'claude login' (OAuth) or https://console.anthropic.com/settings/keys (API key)."
-echo
-read -rsp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY; echo
-[[ -n "$ANTHROPIC_API_KEY" ]] || die "ANTHROPIC_API_KEY cannot be empty."
-[[ "$ANTHROPIC_API_KEY" =~ ^sk-ant- ]] || die "Unexpected key format. Expected sk-ant-oat01-... or sk-ant-api03-..."
+if [[ "$ANDROID_ONLY" == "false" ]]; then
+    echo
+    echo "Ares requires an Anthropic OAuth token (sk-ant-oat01-...) or API key (sk-ant-api03-)."
+    echo "Get one via 'claude login' (OAuth) or https://console.anthropic.com/settings/keys (API key)."
+    echo
+    read -rsp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY; echo
+    [[ -n "$ANTHROPIC_API_KEY" ]] || die "ANTHROPIC_API_KEY cannot be empty."
+    [[ "$ANTHROPIC_API_KEY" =~ ^sk-ant- ]] || die "Unexpected key format. Expected sk-ant-oat01-... or sk-ant-api03-..."
 
 # ── Discord (optional) ────────────────────────────────────────────────────────
 
-echo
-read -rp "Enable Discord gateway? [y/N] " DISCORD_ENABLE
-DISCORD_ENABLE="${DISCORD_ENABLE:-n}"
-DISCORD_BOT_TOKEN=""
-DISCORD_ALLOWED_USERS=""
-DISCORD_FREE_RESPONSE_CHANNELS=""
-if [[ "$DISCORD_ENABLE" =~ ^[Yy]$ ]]; then
-    echo "  Create a Discord bot at https://discord.com/developers/applications"
-    read -rsp "  DISCORD_BOT_TOKEN: "                              DISCORD_BOT_TOKEN;    echo
-    read -rp  "  DISCORD_ALLOWED_USERS (your user ID): "          DISCORD_ALLOWED_USERS
-    read -rp  "  DISCORD_FREE_RESPONSE_CHANNELS (forum channel): " DISCORD_FREE_RESPONSE_CHANNELS
-    [[ -n "$DISCORD_BOT_TOKEN" ]]              || die "DISCORD_BOT_TOKEN cannot be empty."
-    [[ -n "$DISCORD_ALLOWED_USERS" ]]          || die "DISCORD_ALLOWED_USERS cannot be empty."
-    [[ -n "$DISCORD_FREE_RESPONSE_CHANNELS" ]] || die "DISCORD_FREE_RESPONSE_CHANNELS cannot be empty."
-    success "Discord configured"
-else
-    warn "Discord skipped — SwarmClaw web UI only (http://localhost:3456)"
-fi
+    echo
+    read -rp "Enable Discord gateway? [y/N] " DISCORD_ENABLE
+    DISCORD_ENABLE="${DISCORD_ENABLE:-n}"
+    DISCORD_BOT_TOKEN=""
+    DISCORD_ALLOWED_USERS=""
+    DISCORD_FREE_RESPONSE_CHANNELS=""
+    if [[ "$DISCORD_ENABLE" =~ ^[Yy]$ ]]; then
+        echo "  Create a Discord bot at https://discord.com/developers/applications"
+        read -rsp "  DISCORD_BOT_TOKEN: "                              DISCORD_BOT_TOKEN;    echo
+        read -rp  "  DISCORD_ALLOWED_USERS (your user ID): "          DISCORD_ALLOWED_USERS
+        read -rp  "  DISCORD_FREE_RESPONSE_CHANNELS (forum channel): " DISCORD_FREE_RESPONSE_CHANNELS
+        [[ -n "$DISCORD_BOT_TOKEN" ]]              || die "DISCORD_BOT_TOKEN cannot be empty."
+        [[ -n "$DISCORD_ALLOWED_USERS" ]]          || die "DISCORD_ALLOWED_USERS cannot be empty."
+        [[ -n "$DISCORD_FREE_RESPONSE_CHANNELS" ]] || die "DISCORD_FREE_RESPONSE_CHANNELS cannot be empty."
+        success "Discord configured"
+    else
+        warn "Discord skipped — SwarmClaw web UI only (http://localhost:3456)"
+    fi
 
 # ── Output directory ──────────────────────────────────────────────────────────
 
-echo
-DEFAULT_OUTPUT="$HOME/ares-pentest-output"
-read -rp "  Pentest output directory [${DEFAULT_OUTPUT}]: " PENTEST_OUTPUT
-PENTEST_OUTPUT="${PENTEST_OUTPUT:-$DEFAULT_OUTPUT}"
-# Resolve to absolute path — mkdir first so cd works on both macOS and Linux
-# (realpath -m is GNU-only; BSD realpath on macOS lacks the -m flag)
-mkdir -p "$PENTEST_OUTPUT"
-PENTEST_OUTPUT="$(cd "$PENTEST_OUTPUT" && pwd)"
-[[ "$PENTEST_OUTPUT" == /* ]] || die "Output path must be absolute."
-# No chmod: Docker (root) writes into user-owned dirs unconditionally.
-# Root-created files default to 644 — readable by the host user.
-# Reclaim ownership later if needed:
-#   docker run --rm -v "$PENTEST_OUTPUT":/out alpine chown -R $(id -u):$(id -g) /out
-success "Output directory: $PENTEST_OUTPUT"
+    echo
+    DEFAULT_OUTPUT="$HOME/ares-pentest-output"
+    read -rp "  Pentest output directory [${DEFAULT_OUTPUT}]: " PENTEST_OUTPUT
+    PENTEST_OUTPUT="${PENTEST_OUTPUT:-$DEFAULT_OUTPUT}"
+    mkdir -p "$PENTEST_OUTPUT"
+    PENTEST_OUTPUT="$(cd "$PENTEST_OUTPUT" && pwd)"
+    [[ "$PENTEST_OUTPUT" == /* ]] || die "Output path must be absolute."
+    # No chmod: Docker (root) writes into user-owned dirs unconditionally.
+    # Root-created files default to 644 — readable by the host user.
+    # Reclaim ownership later if needed:
+    #   docker run --rm -v "$PENTEST_OUTPUT":/out alpine chown -R $(id -u):$(id -g) /out
+    success "Output directory: $PENTEST_OUTPUT"
+fi  # end ANDROID_ONLY==false
 
 # ── Android / ADB (optional) ──────────────────────────────────────────────────
 
@@ -320,6 +339,43 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
     fi
 else
     warn "Android testing skipped."
+fi
+
+if [[ "$ANDROID_ONLY" == "true" ]]; then
+    # ── Android-only: update .env in place and restart hermes ─────────────────
+    info "Updating .env with Android settings..."
+
+    # Remove existing Android lines then append fresh values
+    sed -i.bak \
+        -e '/^ADB_SERIAL=/d' \
+        -e '/^ANDROID_ADB_SERVER_HOST=/d' \
+        -e '/^FRIDA_SERVER_ARCH=/d' \
+        -e '/^# ADB_SERIAL=/d' \
+        -e '/^# ANDROID_ADB_SERVER_HOST=/d' \
+        -e '/^# FRIDA_SERVER_ARCH=/d' \
+        .env && rm -f .env.bak
+
+    if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
+        {
+            printf '\nADB_SERIAL=%s\n'             "$ADB_SERIAL_VAL"
+            printf 'ANDROID_ADB_SERVER_HOST=%s\n'  "$ANDROID_ADB_SERVER_HOST_VAL"
+            printf 'FRIDA_SERVER_ARCH=%s\n'         "$FRIDA_SERVER_ARCH_VAL"
+        } >> .env
+        success ".env updated"
+    else
+        warn "Android skipped — .env unchanged"
+    fi
+
+    info "Restarting ares-hermes to apply new Android settings..."
+    docker compose --project-name ares restart hermes
+    success "ares-hermes restarted"
+
+    echo
+    echo "────────────────────────────────────────────────────────────"
+    echo "  Android configuration applied."
+    [[ "$ADB_ENABLE" =~ ^[Yy]$ ]] && echo "  ADB serial:  $ADB_SERIAL_VAL"
+    echo "────────────────────────────────────────────────────────────"
+    exit 0
 fi
 
 # ── Generate secrets ──────────────────────────────────────────────────────────
