@@ -678,7 +678,7 @@ ssh USER@HOST 'curl -s -o /dev/null -w "%{http_code}" http://localhost:3001'
 **HUMAN ACTION #6:** In the pentest forum channel, create a new thread and send:
 
 ```
-Full web app assessment on http://localhost:3001
+Full web app assessment on http://172.17.0.1:3001
 OWASP Juice Shop — fully authorized.
 Admin: admin@juice-sh.op / admin123
 User: jim@juice-sh.op / ncc-1701
