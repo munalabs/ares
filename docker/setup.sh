@@ -30,6 +30,29 @@ else
     ANDROID_ONLY=false
 fi
 
+# ── Load existing .env as defaults (re-run idempotency) ──────────────────────
+# If .env already exists, extract stored values so re-runs skip prompts for
+# keys that are already configured and don't regenerate secrets unnecessarily.
+EXISTING_ANTHROPIC_API_KEY=""
+EXISTING_ZAP_API_KEY=""
+EXISTING_MOBSF_API_KEY=""
+EXISTING_PENTEST_OUTPUT=""
+EXISTING_DISCORD_BOT_TOKEN=""
+EXISTING_DISCORD_ALLOWED_USERS=""
+EXISTING_DISCORD_FREE_RESPONSE_CHANNELS=""
+
+if [[ -f .env && "$ANDROID_ONLY" == "false" ]]; then
+    _envval() { grep "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r'; }
+    EXISTING_ANTHROPIC_API_KEY=$(_envval ANTHROPIC_API_KEY)
+    EXISTING_ZAP_API_KEY=$(_envval ZAP_API_KEY)
+    EXISTING_MOBSF_API_KEY=$(_envval MOBSF_API_KEY)
+    EXISTING_PENTEST_OUTPUT=$(_envval PENTEST_OUTPUT)
+    EXISTING_DISCORD_BOT_TOKEN=$(_envval DISCORD_BOT_TOKEN)
+    EXISTING_DISCORD_ALLOWED_USERS=$(_envval DISCORD_ALLOWED_USERS)
+    EXISTING_DISCORD_FREE_RESPONSE_CHANNELS=$(_envval DISCORD_FREE_RESPONSE_CHANNELS)
+    info "Existing .env found — stored values will be used as defaults"
+fi
+
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 
 [[ $EUID -eq 0 ]] && die "Do not run setup.sh as root. Run as a normal user with Docker access."
@@ -53,38 +76,54 @@ fi
 
 if [[ "$ANDROID_ONLY" == "false" ]]; then
     echo
-    echo "Ares requires an Anthropic OAuth token (sk-ant-oat01-...) or API key (sk-ant-api03-)."
-    echo "Get one via 'claude login' (OAuth) or https://console.anthropic.com/settings/keys (API key)."
-    echo
-    read -rsp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY; echo
-    [[ -n "$ANTHROPIC_API_KEY" ]] || die "ANTHROPIC_API_KEY cannot be empty."
-    [[ "$ANTHROPIC_API_KEY" =~ ^sk-ant- ]] || die "Unexpected key format. Expected sk-ant-oat01-... or sk-ant-api03-..."
+    if [[ "$EXISTING_ANTHROPIC_API_KEY" =~ ^sk-ant- ]]; then
+        ANTHROPIC_API_KEY="$EXISTING_ANTHROPIC_API_KEY"
+        success "ANTHROPIC_API_KEY (reusing existing)"
+    else
+        echo "Ares requires an Anthropic OAuth token (sk-ant-oat01-...) or API key (sk-ant-api03-)."
+        echo "Get one via 'claude login' (OAuth) or https://console.anthropic.com/settings/keys (API key)."
+        echo
+        read -rsp "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY; echo
+        [[ -n "$ANTHROPIC_API_KEY" ]] || die "ANTHROPIC_API_KEY cannot be empty."
+        [[ "$ANTHROPIC_API_KEY" =~ ^sk-ant- ]] || die "Unexpected key format. Expected sk-ant-oat01-... or sk-ant-api03-..."
+    fi
 
 # ── Discord (optional) ────────────────────────────────────────────────────────
 
     echo
-    read -rp "Enable Discord gateway? [y/N] " DISCORD_ENABLE
-    DISCORD_ENABLE="${DISCORD_ENABLE:-n}"
     DISCORD_BOT_TOKEN=""
     DISCORD_ALLOWED_USERS=""
     DISCORD_FREE_RESPONSE_CHANNELS=""
-    if [[ "$DISCORD_ENABLE" =~ ^[Yy]$ ]]; then
-        echo "  Create a Discord bot at https://discord.com/developers/applications"
-        read -rsp "  DISCORD_BOT_TOKEN: "                              DISCORD_BOT_TOKEN;    echo
-        read -rp  "  DISCORD_ALLOWED_USERS (your user ID): "          DISCORD_ALLOWED_USERS
-        read -rp  "  DISCORD_FREE_RESPONSE_CHANNELS (forum channel): " DISCORD_FREE_RESPONSE_CHANNELS
-        [[ -n "$DISCORD_BOT_TOKEN" ]]              || die "DISCORD_BOT_TOKEN cannot be empty."
-        [[ -n "$DISCORD_ALLOWED_USERS" ]]          || die "DISCORD_ALLOWED_USERS cannot be empty."
-        [[ -n "$DISCORD_FREE_RESPONSE_CHANNELS" ]] || die "DISCORD_FREE_RESPONSE_CHANNELS cannot be empty."
-        success "Discord configured"
+    DISCORD_ENABLE="n"
+
+    if [[ -n "$EXISTING_DISCORD_BOT_TOKEN" ]]; then
+        # Discord already configured — retain silently
+        DISCORD_ENABLE="y"
+        DISCORD_BOT_TOKEN="$EXISTING_DISCORD_BOT_TOKEN"
+        DISCORD_ALLOWED_USERS="$EXISTING_DISCORD_ALLOWED_USERS"
+        DISCORD_FREE_RESPONSE_CHANNELS="$EXISTING_DISCORD_FREE_RESPONSE_CHANNELS"
+        success "Discord settings retained (existing)"
     else
-        warn "Discord skipped — SwarmClaw web UI only (http://localhost:3456)"
+        read -rp "Enable Discord gateway? [y/N] " DISCORD_ENABLE
+        DISCORD_ENABLE="${DISCORD_ENABLE:-n}"
+        if [[ "$DISCORD_ENABLE" =~ ^[Yy]$ ]]; then
+            echo "  Create a Discord bot at https://discord.com/developers/applications"
+            read -rsp "  DISCORD_BOT_TOKEN: "                              DISCORD_BOT_TOKEN;    echo
+            read -rp  "  DISCORD_ALLOWED_USERS (your user ID): "          DISCORD_ALLOWED_USERS
+            read -rp  "  DISCORD_FREE_RESPONSE_CHANNELS (forum channel): " DISCORD_FREE_RESPONSE_CHANNELS
+            [[ -n "$DISCORD_BOT_TOKEN" ]]              || die "DISCORD_BOT_TOKEN cannot be empty."
+            [[ -n "$DISCORD_ALLOWED_USERS" ]]          || die "DISCORD_ALLOWED_USERS cannot be empty."
+            [[ -n "$DISCORD_FREE_RESPONSE_CHANNELS" ]] || die "DISCORD_FREE_RESPONSE_CHANNELS cannot be empty."
+            success "Discord configured"
+        else
+            warn "Discord skipped — SwarmClaw web UI only (http://localhost:3456)"
+        fi
     fi
 
 # ── Output directory ──────────────────────────────────────────────────────────
 
     echo
-    DEFAULT_OUTPUT="$HOME/ares-pentest-output"
+    DEFAULT_OUTPUT="${EXISTING_PENTEST_OUTPUT:-$HOME/ares-pentest-output}"
     read -rp "  Pentest output directory [${DEFAULT_OUTPUT}]: " PENTEST_OUTPUT
     PENTEST_OUTPUT="${PENTEST_OUTPUT:-$DEFAULT_OUTPUT}"
     mkdir -p "$PENTEST_OUTPUT"
@@ -380,11 +419,70 @@ fi
 
 # ── Generate secrets ──────────────────────────────────────────────────────────
 
-ZAP_API_KEY="$(openssl rand -hex 16)"
-success "ZAP API key generated"
+if [[ -n "$EXISTING_ZAP_API_KEY" ]]; then
+    ZAP_API_KEY="$EXISTING_ZAP_API_KEY"
+    success "ZAP API key (reusing existing)"
+else
+    ZAP_API_KEY="$(openssl rand -hex 16)"
+    success "ZAP API key generated"
+fi
+
+# ── Resolve MoBSF API key BEFORE writing .env ─────────────────────────────────
+# MoBSF generates its key internally on first start. We need it before writing
+# .env so we can write the final key directly (no pending → patch dance).
+# On re-runs, reuse the existing valid key — skip the MoBSF early-start entirely.
+#
+# MoBSF runs as uid 9901. Named volumes are created root-owned by default,
+# which causes MOBSF_HOME=None and an immediate crash. Fix ownership first.
+
+docker volume create ares_mobsf-data 2>/dev/null || true
+
+if [[ "$EXISTING_MOBSF_API_KEY" =~ ^[a-fA-F0-9]+$ ]]; then
+    MOBSF_API_KEY="$EXISTING_MOBSF_API_KEY"
+    success "MoBSF API key (reusing existing)"
+    # Still fix ownership in case volume was recreated
+    docker run --rm -v ares_mobsf-data:/data alpine chown -R 9901:9901 /data 2>/dev/null || true
+else
+    info "Starting MoBSF to generate its API key..."
+    docker run --rm -v ares_mobsf-data:/data alpine chown -R 9901:9901 /data
+    docker compose --project-name ares up -d mobsf
+
+    # Skip wait if container is somehow already healthy (unlikely on first run)
+    STATUS=$(docker inspect --format='{{.State.Health.Status}}' ares-mobsf 2>/dev/null || echo "none")
+    if [[ "$STATUS" != "healthy" ]]; then
+        echo -n "  Waiting for MoBSF to become healthy"
+        for i in $(seq 1 72); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' ares-mobsf 2>/dev/null || echo "waiting")
+            if [[ "$STATUS" == "healthy" ]]; then
+                echo; break
+            fi
+            echo -n "."; sleep 5
+            if [[ $i -eq 72 ]]; then
+                echo
+                die "MoBSF did not become healthy after 6 minutes. Check: docker logs ares-mobsf"
+            fi
+        done
+    fi
+    success "MoBSF healthy"
+
+    # Extract the key MoBSF generated internally.
+    # Use perl instead of grep -oP — GNU-only, fails on macOS.
+    # tr -d '\r' strips Windows line endings from Docker log output on macOS.
+    MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
+        | perl -ne 'print "$1\n" if /REST API Key:\s*(\S+)/' | tail -1 | tr -d '\r')
+    if [[ -z "$MOBSF_API_KEY" ]]; then
+        MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
+            | perl -ne 'print "$1\n" if /Api Key\s*:\s*(\S+)/' | tail -1 | tr -d '\r')
+    fi
+    [[ -n "$MOBSF_API_KEY" ]] || die "Could not extract MoBSF API key. Run: docker logs ares-mobsf"
+    [[ "$MOBSF_API_KEY" =~ ^[a-fA-F0-9]+$ ]] \
+        || die "MoBSF key has unexpected format: $MOBSF_API_KEY"
+    success "MoBSF API key extracted"
+fi
 
 # ── Write .env ────────────────────────────────────────────────────────────────
 # Use printf '%s' to write each value literally — no shell expansion of user input.
+# MOBSF_API_KEY is already resolved above, so no pending placeholder needed.
 
 info "Writing .env..."
 
@@ -403,7 +501,7 @@ ENVEOF
         printf 'DISCORD_FREE_RESPONSE_CHANNELS=%s\n'      "$DISCORD_FREE_RESPONSE_CHANNELS"
     fi
     printf '\nZAP_API_KEY=%s\n'        "$ZAP_API_KEY"
-    printf 'MOBSF_API_KEY=pending\n'
+    printf 'MOBSF_API_KEY=%s\n'        "$MOBSF_API_KEY"
     printf '\nPENTEST_OUTPUT=%s\n'     "$PENTEST_OUTPUT"
     if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
         printf '\nADB_SERIAL=%s\n'                  "$ADB_SERIAL_VAL"
@@ -425,48 +523,6 @@ echo
 info "Building ares-hermes and ares-tools images (this takes a few minutes)..."
 docker compose --project-name ares build
 success "Images built"
-
-# ── Start MoBSF first to extract its API key ──────────────────────────────────
-
-info "Starting MoBSF to generate its API key..."
-# MoBSF runs as uid 9901. Named volumes are created root-owned by default,
-# which causes MOBSF_HOME=None and an immediate crash. Fix ownership first.
-docker volume create ares_mobsf-data 2>/dev/null || true
-docker run --rm -v ares_mobsf-data:/data alpine chown -R 9901:9901 /data
-docker compose --project-name ares up -d mobsf
-
-echo -n "  Waiting for MoBSF to become healthy"
-for i in $(seq 1 72); do
-    STATUS=$(docker inspect --format='{{.State.Health.Status}}' ares-mobsf 2>/dev/null || echo "waiting")
-    if [[ "$STATUS" == "healthy" ]]; then
-        echo
-        break
-    fi
-    echo -n "."
-    sleep 5
-    if [[ $i -eq 72 ]]; then
-        echo
-        die "MoBSF did not become healthy after 6 minutes. Check: docker logs ares-mobsf"
-    fi
-done
-success "MoBSF healthy"
-
-# Extract the key MoBSF generated internally.
-# Use perl instead of grep -oP and sed -i — both are GNU-only and fail on macOS.
-MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
-    | perl -ne 'print "$1\n" if /REST API Key:\s*(\S+)/' | tail -1)
-if [[ -z "$MOBSF_API_KEY" ]]; then
-    MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
-        | perl -ne 'print "$1\n" if /Api Key\s*:\s*(\S+)/' | tail -1)
-fi
-[[ -n "$MOBSF_API_KEY" ]] || die "Could not extract MoBSF API key. Run: docker logs ares-mobsf"
-
-# Validate — MoBSF keys are hex strings; reject anything surprising
-[[ "$MOBSF_API_KEY" =~ ^[a-fA-F0-9]+$ ]] || die "MoBSF key has unexpected format: $MOBSF_API_KEY"
-
-# Replace the placeholder — perl -i works on both macOS and Linux
-perl -i -pe "s|^MOBSF_API_KEY=.*|MOBSF_API_KEY=${MOBSF_API_KEY}|" .env
-success "MoBSF API key extracted and saved"
 
 # ── Start the full stack ───────────────────────────────────────────────────────
 
