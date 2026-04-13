@@ -67,11 +67,11 @@ echo
 DEFAULT_OUTPUT="$HOME/ares-pentest-output"
 read -rp "  Pentest output directory [${DEFAULT_OUTPUT}]: " PENTEST_OUTPUT
 PENTEST_OUTPUT="${PENTEST_OUTPUT:-$DEFAULT_OUTPUT}"
-# Resolve to absolute path; reject paths that look like injection attempts
-PENTEST_OUTPUT="$(realpath -m "$PENTEST_OUTPUT")"
-[[ "$PENTEST_OUTPUT" == /* ]] || die "Output path must be absolute."
-
+# Resolve to absolute path — mkdir first so cd works on both macOS and Linux
+# (realpath -m is GNU-only; BSD realpath on macOS lacks the -m flag)
 mkdir -p "$PENTEST_OUTPUT"
+PENTEST_OUTPUT="$(cd "$PENTEST_OUTPUT" && pwd)"
+[[ "$PENTEST_OUTPUT" == /* ]] || die "Output path must be absolute."
 # No chmod: Docker (root) writes into user-owned dirs unconditionally.
 # Root-created files default to 644 — readable by the host user.
 # Reclaim ownership later if needed:
