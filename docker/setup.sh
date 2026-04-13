@@ -451,18 +451,21 @@ for i in $(seq 1 72); do
 done
 success "MoBSF healthy"
 
-# Extract the key MoBSF generated internally
-MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 | grep -oP 'REST API Key:\s*\K\S+' | tail -1)
+# Extract the key MoBSF generated internally.
+# Use perl instead of grep -oP and sed -i — both are GNU-only and fail on macOS.
+MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
+    | perl -ne 'print "$1\n" if /REST API Key:\s*(\S+)/' | tail -1)
 if [[ -z "$MOBSF_API_KEY" ]]; then
-    MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 | grep -oP 'Api Key\s*:\s*\K\S+' | tail -1)
+    MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
+        | perl -ne 'print "$1\n" if /Api Key\s*:\s*(\S+)/' | tail -1)
 fi
 [[ -n "$MOBSF_API_KEY" ]] || die "Could not extract MoBSF API key. Run: docker logs ares-mobsf"
 
 # Validate — MoBSF keys are hex strings; reject anything surprising
 [[ "$MOBSF_API_KEY" =~ ^[a-fA-F0-9]+$ ]] || die "MoBSF key has unexpected format: $MOBSF_API_KEY"
 
-# Replace the placeholder using | as delimiter (safe against keys containing /)
-sed -i "s|^MOBSF_API_KEY=.*|MOBSF_API_KEY=${MOBSF_API_KEY}|" .env
+# Replace the placeholder — perl -i works on both macOS and Linux
+perl -i -pe "s|^MOBSF_API_KEY=.*|MOBSF_API_KEY=${MOBSF_API_KEY}|" .env
 success "MoBSF API key extracted and saved"
 
 # ── Start the full stack ───────────────────────────────────────────────────────
