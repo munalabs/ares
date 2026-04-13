@@ -68,9 +68,6 @@ RUN npm install -g @playwright/mcp@latest \
     && npx playwright install-deps \
     && rm -rf /var/cache/apt/lists/*
 
-# ── GitNexus MCP ──────────────────────────────────────────────────────────────
-RUN npm install -g gitnexus
-
 # ── Profile structure ─────────────────────────────────────────────────────────
 RUN mkdir -p \
     /root/.hermes/profiles/pentest/skills/pentest-orchestrate \
