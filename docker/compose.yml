@@ -59,6 +59,8 @@ services:
     image: ares-hermes:latest
     container_name: ares-hermes
     restart: unless-stopped
+    ports:
+      - "${HERMES_WEB_PORT:-9119}:9119"
     env_file: .env
     environment:
       HERMES_HOME: /root/.hermes/profiles/pentest
@@ -66,6 +68,7 @@ services:
       # Requires API_SERVER_KEY — hermes refuses 0.0.0.0 without auth.
       API_SERVER_HOST: "0.0.0.0"
       API_SERVER_KEY: "${HERMES_API_KEY:-}"
+      HERMES_WEB_PORT: "${HERMES_WEB_PORT:-9119}"
       # ADB host bridge — connects the adb client inside this container to the
       # ADB server running on the host machine. The host server manages:
       #   - USB-connected phones (plug phone into host, authorize once)

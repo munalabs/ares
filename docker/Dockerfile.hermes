@@ -93,9 +93,14 @@ ENV API_SERVER_ENABLED=true
 ENV API_SERVER_PORT=8643
 
 EXPOSE 8643
+# Hermes web UI (v0.9.0+) — binds 0.0.0.0 so it's reachable from the host
+EXPOSE 9119
 
 VOLUME ["/pentest-output"]
 
-# .env is mounted at runtime — never bake secrets into the image:
-#   -v ./docker/.env:/root/.hermes/profiles/pentest/.env:ro
-ENTRYPOINT ["hermes", "gateway"]
+# Start both the HTTP API gateway and the web UI.
+# Gateway is PID 1 (exec); web UI runs as a background process.
+# .env is mounted at runtime — never bake secrets into the image.
+COPY docker/hermes-entrypoint.sh /usr/local/bin/hermes-entrypoint.sh
+RUN chmod +x /usr/local/bin/hermes-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/hermes-entrypoint.sh"]
