@@ -525,6 +525,40 @@ info "Building ares-hermes and ares-tools images (this takes a few minutes)..."
 docker compose --project-name ares build
 success "Images built"
 
+# ── Pre-build SwarmClaw ───────────────────────────────────────────────────────
+# SwarmClaw's npm package has no pre-built Next.js bundle, so it builds at
+# runtime. On Docker Desktop with ≤4GB RAM the build worker gets OOM-killed
+# competing with other containers. Build in isolation here so the artifact
+# is cached in the swarmclaw-data volume before the full stack starts.
+
+docker volume create ares_swarmclaw-data 2>/dev/null || true
+docker volume create ares_swarmclaw-npm 2>/dev/null || true
+
+SC_BUILT=$(docker run --rm -v ares_swarmclaw-data:/data alpine \
+    sh -c 'ls /data/builds 2>/dev/null | head -1' 2>/dev/null || true)
+
+if [[ -z "$SC_BUILT" ]]; then
+    info "Pre-building SwarmClaw Next.js app (first run, ~2 min)..."
+    docker run --rm \
+        -v ares_swarmclaw-data:/root/.swarmclaw \
+        -v ares_swarmclaw-npm:/root/.npm-global \
+        -e npm_config_prefix=/root/.npm-global \
+        -e PATH=/root/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        -e NODE_OPTIONS=--max-old-space-size=2048 \
+        node:22 \
+        sh -c '
+            export PATH=/root/.npm-global/bin:$PATH
+            if ! command -v swarmclaw >/dev/null 2>&1; then
+                npm install -g @swarmclawai/swarmclaw --quiet --no-progress || exit 1
+            fi
+            swarmclaw server --build
+        ' \
+        && success "SwarmClaw pre-built" \
+        || warn "SwarmClaw pre-build failed — will retry on first start"
+else
+    success "SwarmClaw already built (cached)"
+fi
+
 # ── Start the full stack ───────────────────────────────────────────────────────
 
 info "Starting full stack..."

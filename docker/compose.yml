@@ -26,7 +26,7 @@ services:
   swarmclaw:
     image: node:22
     container_name: ares-swarmclaw
-    restart: unless-stopped
+    restart: on-failure
     # npm global dir is persisted in swarmclaw-npm volume.
     # First start installs the package (~60s); subsequent starts are instant.
     command: >
@@ -34,7 +34,8 @@ services:
         export npm_config_prefix=/root/.npm-global
         export PATH=/root/.npm-global/bin:$$PATH
         if ! command -v swarmclaw > /dev/null 2>&1; then
-          npm install -g @swarmclawai/swarmclaw --quiet --no-progress;
+          rm -rf /root/.npm-global/lib/node_modules/@swarmclawai/swarmclaw 2>/dev/null || true;
+          npm install -g @swarmclawai/swarmclaw --quiet --no-progress || exit 1;
         fi
         swarmclaw start
       "
