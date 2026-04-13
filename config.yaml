@@ -2,16 +2,29 @@
 # Drop-in config for ~/.hermes/profiles/pentest/config.yaml
 # See README.md for setup instructions and required environment variables.
 
+# Model routing strategy:
+#   Sonnet  — default: orchestration, tool execution, report writing (fast, cheap)
+#   Opus    — explicit: vuln analysis, attack chain building, exploitation decisions
+#   Haiku   — smart routing: trivial turns (JSON parsing, format ops, tool invocations)
+#
+# The SKILL.md instructs the agent to delegate_task to Opus only for the steps
+# that require deep reasoning. Everything else runs on Sonnet.
+
 model:
-  default: claude-opus-4-6
+  default: claude-sonnet-4-6
   provider: anthropic
 
 agent:
-  reasoning_effort: xhigh
-  max_turns: 150
+  reasoning_effort: medium   # default for Sonnet orchestration turns
+  max_turns: 200             # higher ceiling — more turns at lower cost
 
 smart_model_routing:
-  enabled: false
+  enabled: true
+  max_simple_chars: 300
+  max_simple_words: 50
+  cheap_model:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001  # trivial turns: parsing, formatting, lookups
 
 compression:
   enabled: true
@@ -24,7 +37,7 @@ compression:
 auxiliary:
   delegation:
     provider: anthropic
-    model: claude-sonnet-4-6
+    model: claude-sonnet-4-6  # delegate_task default — Opus overridden per-call in skill
   vision:
     provider: auto
   web_extraction:
