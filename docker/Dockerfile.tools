@@ -1,0 +1,51 @@
+FROM nikolaik/python-nodejs:python3.11-nodejs20
+
+LABEL org.opencontainers.image.title="ares-tools"
+LABEL org.opencontainers.image.description="Security tools terminal — spawned per engagement session by Hermes"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── System tools ──────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nmap nikto curl wget git jq \
+    ca-certificates libssl-dev openssl \
+    docker.io \
+    && (apt-get install -y android-sdk-platform-tools 2>/dev/null \
+        || apt-get install -y adb 2>/dev/null || true) \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python security tools ─────────────────────────────────────────────────────
+RUN pip3 install sqlmap commix --break-system-packages
+
+# ── Go toolchain + security tools ─────────────────────────────────────────────
+RUN wget -qO- https://go.dev/dl/go1.23.2.linux-amd64.tar.gz \
+    | tar -C /usr/local -xzf -
+ENV PATH="/usr/local/go/bin:/root/go/bin:$PATH"
+
+RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
+    && go install github.com/ffuf/ffuf/v2@latest \
+    && go install github.com/hahwul/dalfox/v2@latest \
+    && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
+    && go install github.com/projectdiscovery/httpx/cmd/httpx@latest \
+    && nuclei -update-templates 2>/dev/null || true
+
+# ── Playwright (DOM testing + authenticated crawl) ────────────────────────────
+RUN npm install -g @playwright/mcp@latest \
+    && npx playwright install chromium \
+    && npx playwright install-deps \
+    && rm -rf /var/cache/apt/lists/*
+
+# ── testssl.sh ────────────────────────────────────────────────────────────────
+RUN git clone --depth 1 https://github.com/drwetter/testssl.sh.git /opt/testssl \
+    && ln -s /opt/testssl/testssl.sh /usr/local/bin/testssl
+
+# ── Wordlists ─────────────────────────────────────────────────────────────────
+RUN mkdir -p /wordlists \
+    && BASE="https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content" \
+    && curl -sL "$BASE/common.txt"                  -o /wordlists/common.txt \
+    && curl -sL "$BASE/raft-medium-directories.txt" -o /wordlists/raft-medium-dirs.txt \
+    && curl -sL "$BASE/api/api-endpoints.txt"       -o /wordlists/api-endpoints.txt
+
+# ── Output directory ──────────────────────────────────────────────────────────
+RUN mkdir -p /pentest-output
+VOLUME ["/pentest-output"]

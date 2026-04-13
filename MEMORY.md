@@ -22,10 +22,13 @@ Example correct final message (use REAL filenames, not placeholders):
   The terminal container does NOT have Chromium or its dependencies installed.
   NEVER try to install, launch, or use Playwright/Chromium inside the terminal.
   All browser automation MUST go through mcp_playwright_* tools.
-- ZAP is NOT available as MCP (v0.0.1 alpha broken). Use ZAP REST API directly:
-  - API base: http://$ZAP_CONTAINER_IP:8080/JSON/ (env var — forwarded into terminal via docker_forward_env)
-  - API key is in ZAP_API_KEY env var
-  - Example: curl "http://$ZAP_CONTAINER_IP:8080/JSON/core/view/version/?apikey=$ZAP_API_KEY"
+- ZAP is NOT available as MCP (v0.0.1 alpha broken). Use ZAP REST API via $ZAP_URL:
+  - $ZAP_URL is set in /tmp/engagement.env by Phase 0 (always source it first)
+  - Docker Compose: per-engagement ZAP on a dynamic port — $ZAP_URL = http://172.17.0.1:{port}/JSON
+  - Bare-metal fallback: shared ZAP — $ZAP_URL = http://$ZAP_CONTAINER_IP:8080/JSON
+  - API key is in $ZAP_API_KEY env var (forwarded into terminal)
+  - Example: curl "$ZAP_URL/core/view/version/?apikey=$ZAP_API_KEY"
+  - NEVER hardcode ZAP address — always use $ZAP_URL from engagement.env
 
 ## CLI Tools
 - sqlmap, nuclei, ffuf, dalfox, subfinder, nmap, nikto, commix

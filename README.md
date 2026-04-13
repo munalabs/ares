@@ -159,27 +159,68 @@ Hindsight uses Groq free tier (llama-3.3-70b-versatile) for memory extraction �
 
 ## Quick Start
 
-### Prerequisites
+Two deployment paths: Docker Compose (fastest, self-contained) or bare-metal via Claude Code (full control, supports all features including Hindsight).
 
-- Ubuntu Server 22.04+ (bare metal or VM)
-- An Anthropic account with credits (OAuth — not API key)
-- A Google AI Studio API key (compression + delegation — much cheaper than Opus)
-- A Groq API key (free tier — for Hindsight memory extraction)
-- A Discord server where you control bot permissions
-- Claude Code installed on the machine running Claude (your workstation)
+---
 
-### Deploy
+### Option A: Docker Compose
 
-Open a conversation with Claude Code and paste:
+**Prerequisites:** Docker Engine, Docker Compose v2, an Anthropic OAuth token (`claude login`), Google AI Studio key, Groq key, Discord bot.
+
+```bash
+git clone https://github.com/munalabs/ares.git
+cd ares/docker
+
+cp .env.example .env
+$EDITOR .env   # fill in API keys and Discord tokens
+
+# Create output directory (bind-mounted into all containers)
+sudo mkdir -p /opt/ares/pentest-output && sudo chmod 777 /opt/ares/pentest-output
+
+# Build images and start stack
+docker compose --project-name ares build
+docker compose --project-name ares up -d
+
+# Get the MoBSF API key (generated at first start) and add to .env
+docker compose --project-name ares logs mobsf | grep "REST API Key"
+# Add MOBSF_API_KEY=<key> to .env, then:
+docker compose --project-name ares restart hermes
+```
+
+With Android emulator (requires `/dev/kvm`, bare metal only):
+```bash
+docker compose --project-name ares --profile android up -d
+```
+
+**Services started:**
+
+| Container | Purpose | Port |
+|-----------|---------|------|
+| `ares-hermes` | Hermes + all MCP servers | Discord gateway |
+| `ares-mobsf` | MoBSF static analysis (shared — hash-isolated) | 8100 |
+| `zap-{engagement-id}` | OWASP ZAP — spawned per engagement, torn down after delivery | dynamic 18000–19000 |
+| `ares-android` | Android emulator (optional) | 5555, 6080 |
+
+The `ares-tools` image is the terminal that Hermes spawns for each session — it has all security tools (nmap, sqlmap, nuclei, ffuf, dalfox, subfinder, Playwright, testssl.sh, wordlists) pre-installed.
+
+---
+
+### Option B: Bare-Metal via Claude Code
+
+For production use, full Hindsight memory support, and physical device testing.
+
+**Prerequisites:** Ubuntu Server 22.04+, Claude Code on your workstation.
+
+Open Claude Code and paste:
 
 ```
 Deploy the Ares pentest stack following CLAUDE.md at https://github.com/munalabs/ares
 Target machine: USER@HOST (password: PASSWORD)
 ```
 
-Claude Code reads the `CLAUDE.md` deployment guide and executes the full install remotely via SSH. It handles all 18 phases — tools, Docker containers, Hermes profile, Discord gateway — stopping only at the 6 human action points (reboot, OAuth login, API keys, Discord bot setup).
+Claude Code reads `CLAUDE.md` and executes the full install remotely via SSH — tools, containers, Hermes profile, Discord gateway — stopping only at 6 human action points (OAuth login, API keys, Discord bot setup).
 
-Total time: ~30-45 minutes of automated work + ~15 minutes of human actions.
+---
 
 ### Run an Engagement
 

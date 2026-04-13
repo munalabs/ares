@@ -1,0 +1,132 @@
+# Ares — Hermes Pentest Profile (Docker / Compose deployment)
+# Baked into ares-hermes image at /root/.hermes/profiles/pentest/config.yaml
+# For bare-metal, use ../config.yaml instead.
+#
+# Key differences from bare-metal:
+#   - docker_image: ares-tools:latest (pre-built, no runtime installs)
+#   - MCP paths: /opt/pentest-ai/ and /opt/iris/ (baked into ares-hermes)
+#   - ZAP is NOT a fixed service — spawned per engagement in Phase 0
+#     ZAP_URL is written to /tmp/engagement.env by the agent at session start
+#   - MoBSF reached via 172.17.0.1:8100 (Docker bridge)
+
+model:
+  default: claude-sonnet-4-6
+  provider: anthropic
+
+agent:
+  reasoning_effort: medium
+  max_turns: 200
+
+smart_model_routing:
+  enabled: true
+  max_simple_chars: 300
+  max_simple_words: 50
+  cheap_model:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+
+compression:
+  enabled: true
+  threshold: 0.50
+  target_ratio: 0.20
+  protect_last_n: 30
+  summary_model: gemini-2.5-flash
+  summary_provider: google
+
+auxiliary:
+  delegation:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  vision:
+    provider: auto
+  web_extraction:
+    provider: auto
+
+fallback_model:
+  provider: google
+  model: gemini-2.5-pro
+
+session:
+  inactivity_minutes: 180
+
+terminal:
+  backend: docker
+  docker_image: ares-tools:latest
+  docker_forward_env:
+    - GITHUB_TOKEN
+    - ZAP_API_KEY
+    - MOBSF_API_KEY
+    - MOBSF_URL
+  docker_env:
+    ZAP_API_KEY: "${ZAP_API_KEY}"
+    MOBSF_URL: "http://172.17.0.1:8100"
+    MOBSF_API_KEY: "${MOBSF_API_KEY}"
+    # ZAP_URL is NOT set here — it's written to /tmp/engagement.env per engagement
+    # (each engagement gets its own ZAP on a dynamic port)
+  docker_volumes:
+    - "${PENTEST_OUTPUT:-/opt/ares/pentest-output}:/pentest-output"
+    - "${PENTEST_OUTPUT:-/opt/ares/pentest-output}:/home/user/pentest-output"
+  container_cpu: 4
+  container_memory: 16384
+  container_persistent: true
+
+security:
+  tirith_enabled: true
+  tirith_fail_open: false
+  redact_secrets: true
+
+background:
+  notify_on_complete: true
+
+mcp_servers:
+  playwright:
+    command: npx
+    args:
+      - "@playwright/mcp@latest"
+      - --headless
+      - --no-sandbox
+      - --browser
+      - chromium
+
+  pentest-ai:
+    command: /usr/bin/python3
+    args:
+      - /opt/pentest-ai/mcp_server/server.py
+    timeout: 1800
+    env:
+      PYTHONPATH: /opt/pentest-ai
+
+  gitnexus:
+    command: npx
+    args:
+      - -y
+      - gitnexus@latest
+      - mcp
+
+  mobsf:
+    command: /usr/bin/python3
+    args:
+      - /opt/iris/mobsf.py
+    env:
+      MOBSF_URL: "http://172.17.0.1:8100"
+      MOBSF_API_KEY: "${MOBSF_API_KEY}"
+      PENTEST_OUTPUT: /pentest-output
+
+  adb:
+    command: /usr/bin/python3
+    args:
+      - /opt/iris/adb.py
+    env:
+      PENTEST_OUTPUT: /pentest-output
+      ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
+      ADB_SERIAL: "${ADB_SERIAL:-localhost:5555}"
+
+  frida:
+    command: /usr/bin/python3
+    args:
+      - /opt/iris/frida.py
+    env:
+      PENTEST_OUTPUT: /pentest-output
+      ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
+      FRIDA_SERVER_PATH: /opt/iris/frida-server/frida-server-android-x86_64
+      FRIDA_DEVICE: "${ADB_SERIAL:-localhost:5555}"

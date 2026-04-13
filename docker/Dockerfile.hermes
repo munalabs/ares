@@ -1,0 +1,71 @@
+FROM ubuntu:24.04
+
+LABEL org.opencontainers.image.title="ares-hermes"
+LABEL org.opencontainers.image.description="Hermes Agent + Ares pentest profile MCP servers"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/root/.local/bin:/root/.hermes/hermes-agent/venv/bin:/usr/local/go/bin:/root/go/bin:$PATH"
+
+# ── Base dependencies ─────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-dev \
+    curl wget git ca-certificates gnupg \
+    build-essential pkg-config libssl-dev \
+    docker.io jq xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 22 (playwright MCP + gitnexus)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Hermes Agent ──────────────────────────────────────────────────────────────
+RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+
+# Fix shebang — installer may resolve to system python3, missing venv deps
+RUN HERMES_BIN="/root/.hermes/hermes-agent/hermes"; \
+    VENV_PY="/root/.hermes/hermes-agent/venv/bin/python3"; \
+    if head -1 "$HERMES_BIN" | grep -q '/usr/bin/env python3'; then \
+        sed -i "1s|.*|#!${VENV_PY}|" "$HERMES_BIN"; \
+    fi; \
+    ln -sf "$HERMES_BIN" /root/.local/bin/hermes
+
+# ── pentest-ai MCP server ─────────────────────────────────────────────────────
+# /usr/bin/python3 required — Hermes venv Python lacks aiosqlite + pentest-ai deps
+RUN git clone --depth 1 https://github.com/0xSteph/pentest-ai.git /opt/pentest-ai \
+    && pip3 install -e /opt/pentest-ai --break-system-packages
+
+# ── Iris MCP servers (MoBSF + ADB + Frida) ───────────────────────────────────
+RUN git clone --depth 1 https://github.com/munalabs/iris.git /opt/iris \
+    && pip3 install fastmcp httpx frida frida-tools --break-system-packages
+
+# ── Playwright MCP ────────────────────────────────────────────────────────────
+RUN npm install -g @playwright/mcp@latest \
+    && npx playwright install chromium \
+    && npx playwright install-deps \
+    && rm -rf /var/cache/apt/lists/*
+
+# ── GitNexus MCP ──────────────────────────────────────────────────────────────
+RUN npm install -g gitnexus
+
+# ── Profile structure ─────────────────────────────────────────────────────────
+RUN mkdir -p \
+    /root/.hermes/profiles/pentest/skills/pentest-orchestrate \
+    /root/.hermes/memories \
+    /pentest-output
+
+COPY SOUL.md   /root/.hermes/profiles/pentest/SOUL.md
+COPY MEMORY.md /root/.hermes/profiles/pentest/MEMORY.md
+COPY docker/config.yaml \
+     /root/.hermes/profiles/pentest/config.yaml
+COPY skills/pentest-orchestrate/SKILL.md \
+     /root/.hermes/profiles/pentest/skills/pentest-orchestrate/SKILL.md
+
+# ── Runtime ───────────────────────────────────────────────────────────────────
+ENV HERMES_HOME=/root/.hermes/profiles/pentest
+
+VOLUME ["/pentest-output"]
+
+# .env is mounted at runtime — never bake secrets into the image:
+#   -v ./docker/.env:/root/.hermes/profiles/pentest/.env:ro
+ENTRYPOINT ["hermes", "gateway"]

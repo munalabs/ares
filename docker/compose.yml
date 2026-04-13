@@ -1,45 +1,77 @@
-# Ares — Docker Compose for pentest dependencies
-# Usage: docker compose -f docker/compose.yml up -d
+# Ares — Pentest stack
+#
+# ZAP is intentionally absent from this file.
+# Each engagement spawns its own ZAP container (Phase 0) and tears it down
+# after delivery (Phase 7), giving complete isolation between parallel engagements.
+#
+# Usage:
+#   cp .env.example .env && $EDITOR .env
+#   docker compose --project-name ares up -d
+#
+# With Android emulator (requires /dev/kvm on bare metal):
+#   docker compose --project-name ares --profile android up -d
+#
+# Build images first:
+#   docker compose --project-name ares build
 
 services:
-  owasp-zap:
-    image: ghcr.io/zaproxy/zaproxy:stable
-    container_name: owasp-zap
-    restart: unless-stopped
-    ports:
-      - "8090:8080"
-    volumes:
-      - ~/zap-data:/zap/wrk
-    command: >
-      zap.sh -daemon -host 0.0.0.0 -port 8080
-      -config api.key=${ZAP_API_KEY}
-      -config api.addrs.addr.name=".*"
-      -config api.addrs.addr.regex=true
 
+  # ── Hermes + all MCP servers ──────────────────────────────────────────────
+  hermes:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.hermes
+    image: ares-hermes:latest
+    container_name: ares-hermes
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HERMES_HOME: /root/.hermes/profiles/pentest
+    volumes:
+      # Docker socket — Hermes spawns terminal containers and per-engagement ZAP
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared output — same host path mounted into terminal containers
+      - ${PENTEST_OUTPUT:-/opt/ares/pentest-output}:/pentest-output
+    depends_on:
+      mobsf:
+        condition: service_healthy
+
+  # ── MoBSF ─────────────────────────────────────────────────────────────────
+  # Shared across engagements — results are isolated by file hash, no contamination.
+  # Exposed on host port 8100 so terminal containers reach it via 172.17.0.1:8100.
   mobsf:
     image: opensecurity/mobile-security-framework-mobsf:latest
-    container_name: mobsf
+    container_name: ares-mobsf
     restart: unless-stopped
     ports:
       - "8100:8000"
     volumes:
-      - ~/services/mobsf:/home/mobsf/.MobSF
-    # CRITICAL: MoBSF runs as uid 9901. Run before starting:
-    # sudo chown -R 9901:9901 ~/services/mobsf
+      - mobsf-data:/home/mobsf/.MobSF
+    user: "9901:9901"   # MoBSF runs as uid 9901 — volume must match
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
 
+  # ── Android emulator (optional) ───────────────────────────────────────────
+  # Requires /dev/kvm — bare metal only, not VMs without nested virtualization.
+  # View screen at http://localhost:6080
+  # Start with: docker compose --project-name ares --profile android up -d
   android-emulator:
-    # Optional: Android emulator for dynamic analysis
-    # Requires /dev/kvm (bare metal only, not VMs without nested virt)
     image: budtmo/docker-android:emulator_13.0
-    container_name: android-emulator
+    container_name: ares-android
     restart: unless-stopped
+    profiles: [android]
     ports:
-      - "5555:5555"
-      - "6080:6080"
+      - "5555:5555"   # ADB over TCP
+      - "6080:6080"   # VNC web viewer
     environment:
       EMULATOR_DEVICE: "Samsung Galaxy S10"
       WEB_VNC: "true"
     devices:
-      - /dev/kvm
-    profiles:
-      - android  # Only start with: docker compose --profile android up -d
+      - /dev/kvm:/dev/kvm
+
+volumes:
+  mobsf-data:
