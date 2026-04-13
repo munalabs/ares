@@ -22,13 +22,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Hermes Agent ──────────────────────────────────────────────────────────────
-# Download script separately so we can pass CONFIGURE=false — the installer
-# ends with a setup wizard that opens /dev/tty, which doesn't exist in docker
-# build context and causes exit code 1. CONFIGURE=false skips the wizard.
+# The installer ends with an interactive setup wizard that opens /dev/tty directly.
+# Docker build has no TTY so the wizard exits 1 — but all real install steps
+# complete before it. Allow the failure with || true, then assert the binary
+# exists so genuine install failures still break the build.
 RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh \
         -o /tmp/hermes-install.sh \
-    && CONFIGURE=false bash /tmp/hermes-install.sh \
-    && rm /tmp/hermes-install.sh
+    && bash /tmp/hermes-install.sh || true \
+    && rm /tmp/hermes-install.sh \
+    && test -f /root/.hermes/hermes-agent/hermes \
+    || { echo "ERROR: hermes binary missing after install"; exit 1; }
 
 # Fix shebang — installer may resolve to system python3, missing venv deps
 RUN HERMES_BIN="/root/.hermes/hermes-agent/hermes"; \
