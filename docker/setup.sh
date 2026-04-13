@@ -80,160 +80,191 @@ success "Output directory: $PENTEST_OUTPUT"
 
 # ── Android / ADB (optional) ──────────────────────────────────────────────────
 
-echo
-echo "Android testing (ADB) is optional. Skip if you don't need mobile testing."
-read -rp "  Configure ADB for Android testing? [y/N] " ADB_ENABLE
-ADB_ENABLE="${ADB_ENABLE:-n}"
+# ── Android pre-flight check ──────────────────────────────────────────────────
+# Detect platform and check all Android dependencies BEFORE asking any questions.
+# This gives the user clear install instructions upfront rather than mid-setup.
+
+HOST_OS="$(uname -s)"    # Darwin | Linux
+HOST_ARCH="$(uname -m)"  # x86_64 | arm64
+
+# Defaults (overridden by detection below)
 ADB_SERIAL_VAL="localhost:5555"
-ANDROID_ADB_SERVER_HOST_VAL=""
+ANDROID_ADB_SERVER_HOST_VAL="host.docker.internal"
+FRIDA_SERVER_ARCH_VAL="x86_64"
+COMPOSE_ANDROID_PROFILE=""
 
-if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
-    # ── Detect host platform ───────────────────────────────────────────────────
-    HOST_OS="$(uname -s)"     # Darwin | Linux
-    HOST_ARCH="$(uname -m)"   # x86_64 | arm64 | aarch64
+echo
+echo "────────────────────────────────────────────────────────────"
+echo "  Android testing (optional)"
+echo "────────────────────────────────────────────────────────────"
 
-    # ── Default ADB serial and Frida arch by platform ─────────────────────────
-    # macOS: Docker emulator unavailable (no /dev/kvm in Docker Desktop VM).
-    #   Use Android Studio AVD. AVD exposes ADB on localhost:5554 by default.
-    #   Apple Silicon AVDs are ARM64; Intel Macs are x86_64.
-    # Linux: Docker emulator available (--profile android, requires /dev/kvm).
-    #   Default serial is localhost:5555 (budtmo container ADB port).
-    #   x86_64 emulator, so Frida server is x86_64.
+# ── ADB ───────────────────────────────────────────────────────────────────────
+ADB_OK=false
+if command -v adb >/dev/null 2>&1; then
+    ADB_OK=true
+    success "adb: $(command -v adb)"
+else
+    warn "adb: not found"
     if [[ "$HOST_OS" == "Darwin" ]]; then
-        # macOS: AVD serial is emulator-5554 (ADB server manages this — not a TCP address)
-        DEFAULT_ADB_SERIAL="emulator-5554"
-        DEFAULT_ADB_SERVER_HOST="host.docker.internal"
-        # Apple Silicon (arm64) → ARM64 AVD; Intel → x86_64 AVD
-        if [[ "$HOST_ARCH" == "arm64" ]]; then
-            DEFAULT_FRIDA_ARCH="arm64"
-            info "macOS Apple Silicon detected → Android Studio AVD (ARM64), ADB serial emulator-5554"
+        echo "       → brew install android-platform-tools"
+    else
+        echo "       → sudo apt install android-sdk-platform-tools"
+    fi
+fi
+
+# ── Emulator / KVM ────────────────────────────────────────────────────────────
+EMU_OK=false
+ANDROID_SDK=""
+EMULATOR_BIN=""
+AVDMANAGER_BIN=""
+SDKMANAGER_BIN=""
+
+if [[ "$HOST_OS" == "Darwin" ]]; then
+    # macOS: Android Studio SDK — no /dev/kvm needed (Apple Hypervisor Framework)
+    for candidate in \
+        "${ANDROID_HOME:-}" \
+        "$HOME/Library/Android/sdk" \
+        "/usr/local/lib/android/sdk" \
+        "/opt/homebrew/lib/android/sdk"; do
+        if [[ -n "$candidate" && -x "$candidate/emulator/emulator" ]]; then
+            ANDROID_SDK="$candidate"; break
+        fi
+    done
+
+    if [[ -n "$ANDROID_SDK" ]]; then
+        EMULATOR_BIN="$ANDROID_SDK/emulator/emulator"
+        AVDMANAGER_BIN="$ANDROID_SDK/cmdline-tools/latest/bin/avdmanager"
+        SDKMANAGER_BIN="$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager"
+        EMU_OK=true
+        success "Android SDK: $ANDROID_SDK"
+        success "Emulator:    $EMULATOR_BIN"
+        # Check for existing AVD
+        if "$AVDMANAGER_BIN" list avd 2>/dev/null | grep -q "ares-android"; then
+            success "AVD:         ares-android (exists)"
         else
-            DEFAULT_FRIDA_ARCH="x86_64"
-            info "macOS Intel detected → Android Studio AVD (x86_64), ADB serial emulator-5554"
+            warn    "AVD:         ares-android not found (will be created on setup)"
         fi
     else
-        # budtmo/docker-android exposes ADB over TCP at localhost:5555 — serial is localhost:5555,
-        # not emulator-XXXX (that format is only for emulators launched via the emulator binary)
-        DEFAULT_ADB_SERIAL="localhost:5555"
-        DEFAULT_ADB_SERVER_HOST="host.docker.internal"
-        DEFAULT_FRIDA_ARCH="x86_64"
-        info "Linux detected → Docker emulator (--profile android), ADB serial localhost:5555"
+        warn "Android Studio SDK not found"
+        echo "       → brew install --cask android-studio"
+        echo "         Open Android Studio → More Actions → SDK Manager"
+        echo "         SDK Tools tab → check Android Emulator → Apply"
+        echo "         SDK Platforms tab → check Android 14 (API 34) → Apply"
+        echo "         Re-run setup.sh after installation."
     fi
 
-    echo
-    echo "  ADB bridge: the container talks to the ADB server on this host."
-    echo "  The host ADB server must listen on all interfaces:"
-    echo "    adb kill-server && adb -a -P 5037 nodaemon server start"
-    echo
-    echo "  Other serial options:"
-    echo "    <device-serial>   — USB phone (from \`adb devices\`)"
-    echo "    <device-ip>:5555  — WiFi / Tailscale phone  →  use arm64 for Frida"
-    echo
-    read -rp "  ADB_SERIAL [${DEFAULT_ADB_SERIAL}]: " ADB_SERIAL_VAL
-    ADB_SERIAL_VAL="${ADB_SERIAL_VAL:-$DEFAULT_ADB_SERIAL}"
+    # Frida arch follows chip
+    if [[ "$HOST_ARCH" == "arm64" ]]; then
+        FRIDA_SERVER_ARCH_VAL="arm64"
+        ADB_SERIAL_VAL="emulator-5554"
+        echo
+        info "Platform: macOS Apple Silicon → ARM64 AVD, serial emulator-5554"
+    else
+        FRIDA_SERVER_ARCH_VAL="x86_64"
+        ADB_SERIAL_VAL="emulator-5554"
+        echo
+        info "Platform: macOS Intel → x86_64 AVD, serial emulator-5554"
+    fi
 
-    read -rp "  ANDROID_ADB_SERVER_HOST [${DEFAULT_ADB_SERVER_HOST}]: " ANDROID_ADB_SERVER_HOST_VAL
-    ANDROID_ADB_SERVER_HOST_VAL="${ANDROID_ADB_SERVER_HOST_VAL:-$DEFAULT_ADB_SERVER_HOST}"
+else
+    # Linux: Docker emulator via --profile android (requires /dev/kvm)
+    if [[ -e /dev/kvm ]]; then
+        EMU_OK=true
+        success "/dev/kvm: available (Docker emulator supported)"
+        if ! id -nG "$USER" | grep -qw kvm; then
+            warn "User $USER not in kvm group:"
+            echo "       → sudo usermod -aG kvm $USER && newgrp kvm"
+        fi
+    else
+        warn "/dev/kvm: not found"
+        echo "       → Docker emulator requires bare metal or nested virtualization"
+        echo "         For physical/WiFi device testing ADB still works without KVM"
+    fi
+    ADB_SERIAL_VAL="localhost:5555"
+    echo
+    info "Platform: Linux → Docker emulator (--profile android), serial localhost:5555"
+fi
+
+# ── ADB server instruction ─────────────────────────────────────────────────────
+echo
+echo "  IMPORTANT: The host ADB server must listen on all interfaces so the"
+echo "  Hermes container can reach it. Run this in a separate terminal now:"
+echo
+echo "    adb kill-server && adb -a -P 5037 nodaemon server start"
+echo
+echo "  (On Linux docker0 IP is the host; on macOS host.docker.internal resolves it)"
+echo "────────────────────────────────────────────────────────────"
+
+# ── Ask ───────────────────────────────────────────────────────────────────────
+echo
+if [[ "$ADB_OK" == "false" ]]; then
+    warn "adb not installed — install it and re-run setup.sh to enable Android testing."
+    ADB_ENABLE="n"
+else
+    read -rp "  Configure Android testing? [y/N] " ADB_ENABLE
+    ADB_ENABLE="${ADB_ENABLE:-n}"
+fi
+
+if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
+    echo
+    read -rp "  ADB_SERIAL [${ADB_SERIAL_VAL}]: " _input
+    ADB_SERIAL_VAL="${_input:-$ADB_SERIAL_VAL}"
+
+    echo "  (host.docker.internal works on macOS + Linux Docker Desktop;"
+    echo "   on bare-metal Linux use 172.17.0.1 if host.docker.internal doesn't resolve)"
+    read -rp "  ANDROID_ADB_SERVER_HOST [${ANDROID_ADB_SERVER_HOST_VAL}]: " _input
+    ANDROID_ADB_SERVER_HOST_VAL="${_input:-$ANDROID_ADB_SERVER_HOST_VAL}"
 
     echo
-    echo "  Frida server architecture (must match Android device CPU):"
-    echo "    x86_64 — Linux Docker emulator, Android Studio AVD on Intel"
-    echo "    arm64  — Apple Silicon AVD, most physical phones"
-    read -rp "  FRIDA_SERVER_ARCH [${DEFAULT_FRIDA_ARCH}]: " FRIDA_SERVER_ARCH_VAL
-    FRIDA_SERVER_ARCH_VAL="${FRIDA_SERVER_ARCH_VAL:-$DEFAULT_FRIDA_ARCH}"
+    echo "  Frida server architecture (must match your Android device CPU):"
+    echo "    x86_64 — Linux Docker emulator, Android Studio AVD on Intel Mac"
+    echo "    arm64  — Android Studio AVD on Apple Silicon, most physical phones"
+    read -rp "  FRIDA_SERVER_ARCH [${FRIDA_SERVER_ARCH_VAL}]: " _input
+    FRIDA_SERVER_ARCH_VAL="${_input:-$FRIDA_SERVER_ARCH_VAL}"
     [[ "$FRIDA_SERVER_ARCH_VAL" == "x86_64" || "$FRIDA_SERVER_ARCH_VAL" == "arm64" ]] \
         || die "FRIDA_SERVER_ARCH must be x86_64 or arm64, got: $FRIDA_SERVER_ARCH_VAL"
 
-    # Sanity-check for injection
+    # Injection guards
     [[ "$ADB_SERIAL_VAL" =~ ^[A-Za-z0-9._:/-]+$ ]] \
         || die "ADB_SERIAL contains unexpected characters: $ADB_SERIAL_VAL"
     [[ "$ANDROID_ADB_SERVER_HOST_VAL" =~ ^[A-Za-z0-9._-]+$ ]] \
         || die "ANDROID_ADB_SERVER_HOST contains unexpected characters: $ANDROID_ADB_SERVER_HOST_VAL"
 
-    # ── Start host ADB server listening on all interfaces ─────────────────────
-    if command -v adb >/dev/null 2>&1; then
-        adb kill-server 2>/dev/null || true
-        if adb -a -P 5037 nodaemon server start >/dev/null 2>&1; then
-            success "Host ADB server started on 0.0.0.0:5037"
-        else
-            warn "Could not start ADB server with -a flag. Start it manually:"
-            warn "  adb kill-server && adb -a -P 5037 nodaemon server start"
-        fi
+    # Restart ADB server bound to all interfaces
+    adb kill-server 2>/dev/null || true
+    if adb -a -P 5037 nodaemon server start >/dev/null 2>&1; then
+        success "Host ADB server listening on 0.0.0.0:5037"
     else
-        if [[ "$HOST_OS" == "Darwin" ]]; then
-            warn "adb not found. Install via: brew install android-platform-tools"
-        else
-            warn "adb not found. Install via: sudo apt install android-sdk-platform-tools"
-        fi
-        warn "Then run: adb kill-server && adb -a -P 5037 nodaemon server start"
+        warn "Could not start ADB server — start it manually:"
+        warn "  adb kill-server && adb -a -P 5037 nodaemon server start"
     fi
 
     success "ADB configured (serial: $ADB_SERIAL_VAL, frida: $FRIDA_SERVER_ARCH_VAL)"
-else
-    DEFAULT_ADB_SERIAL="localhost:5555"
-    DEFAULT_ADB_SERVER_HOST="host.docker.internal"
-    DEFAULT_FRIDA_ARCH="x86_64"
-    ADB_SERIAL_VAL="$DEFAULT_ADB_SERIAL"
-    ANDROID_ADB_SERVER_HOST_VAL="$DEFAULT_ADB_SERVER_HOST"
-    FRIDA_SERVER_ARCH_VAL="$DEFAULT_FRIDA_ARCH"
-    warn "ADB skipped — mobile testing disabled"
-fi
 
-# ── Android emulator ──────────────────────────────────────────────────────────
-
-COMPOSE_ANDROID_PROFILE=""   # set to "--profile android" if Docker emulator is wanted
-
-if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
+    # ── Emulator setup ────────────────────────────────────────────────────────
     echo
     read -rp "  Set up Android emulator? [y/N] " EMU_ENABLE
     EMU_ENABLE="${EMU_ENABLE:-n}"
 
     if [[ "$EMU_ENABLE" =~ ^[Yy]$ ]]; then
-
         if [[ "$HOST_OS" == "Darwin" ]]; then
-            # ── macOS: Android Studio AVD via command-line tools ──────────────
-            # ADB connects through the host ADB server — no USB passthrough needed.
-            # The emulator uses Apple's Hypervisor Framework (no /dev/kvm required).
-
-            # Locate Android SDK — check ANDROID_HOME first, then standard paths
-            ANDROID_SDK="${ANDROID_HOME:-}"
-            for candidate in \
-                "$HOME/Library/Android/sdk" \
-                "/usr/local/lib/android/sdk" \
-                "/opt/homebrew/lib/android/sdk"; do
-                if [[ -z "$ANDROID_SDK" && -d "$candidate/emulator" ]]; then
-                    ANDROID_SDK="$candidate"
-                fi
-            done
-
-            EMULATOR_BIN="${ANDROID_SDK}/emulator/emulator"
-            AVDMANAGER_BIN="${ANDROID_SDK}/cmdline-tools/latest/bin/avdmanager"
-            SDKMANAGER_BIN="${ANDROID_SDK}/cmdline-tools/latest/bin/sdkmanager"
-
-            if [[ ! -x "$EMULATOR_BIN" ]]; then
-                warn "Android emulator not found. Install Android Studio:"
-                warn "  brew install --cask android-studio"
-                warn "Then open Android Studio → SDK Manager → install:"
-                warn "  Android 14 (API 34) system image + emulator"
-                warn "Re-run setup.sh after installation to create the AVD automatically."
+            if [[ "$EMU_OK" == "false" ]]; then
+                warn "Android Studio SDK not found — install it first (instructions above)."
             else
-                # Determine system image for this chip
-                if [[ "$HOST_ARCH" == "arm64" ]]; then
-                    SYS_IMG="system-images;android-34;google_apis;arm64-v8a"
-                else
-                    SYS_IMG="system-images;android-34;google_apis;x86_64"
-                fi
+                [[ "$HOST_ARCH" == "arm64" ]] \
+                    && SYS_IMG="system-images;android-34;google_apis;arm64-v8a" \
+                    || SYS_IMG="system-images;android-34;google_apis;x86_64"
 
-                # Install system image if missing
-                if ! "$SDKMANAGER_BIN" --list_installed 2>/dev/null | grep -q "${SYS_IMG}"; then
-                    info "Installing Android system image (${SYS_IMG})..."
+                if ! "$SDKMANAGER_BIN" --list_installed 2>/dev/null | grep -q "$SYS_IMG"; then
+                    info "Installing Android system image ($SYS_IMG)..."
                     yes | "$SDKMANAGER_BIN" --licenses > /dev/null 2>&1 || true
                     "$SDKMANAGER_BIN" "$SYS_IMG" \
-                        || die "Failed to install system image. Check Android SDK setup."
+                        || die "System image install failed. Check SDK Manager output."
                     success "System image installed"
+                else
+                    success "System image already installed"
                 fi
 
-                # Create AVD if it doesn't already exist
                 if ! "$AVDMANAGER_BIN" list avd 2>/dev/null | grep -q "ares-android"; then
                     info "Creating ares-android AVD..."
                     echo "no" | "$AVDMANAGER_BIN" create avd \
@@ -246,7 +277,6 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
                     success "AVD ares-android already exists"
                 fi
 
-                # Start emulator headless (background)
                 info "Starting ares-android emulator (headless)..."
                 nohup "$EMULATOR_BIN" \
                     -avd ares-android \
@@ -256,7 +286,6 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
                     > /tmp/ares-avd.log 2>&1 &
                 EMU_PID=$!
 
-                # Wait for boot — emulator registers with ADB server as it starts
                 echo -n "  Waiting for emulator to boot"
                 BOOTED=false
                 for i in $(seq 1 60); do
@@ -271,39 +300,26 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
                     ADB_SERIAL_VAL="emulator-5554"
                 else
                     echo
-                    warn "Emulator still booting — it can take 2-3 minutes on first start."
-                    warn "Check: adb devices (should show emulator-5554)"
-                    warn "Log: /tmp/ares-avd.log"
+                    warn "Emulator still booting — first start can take 2-3 minutes."
+                    warn "Check: adb devices  (should show emulator-5554)"
+                    warn "Log:   /tmp/ares-avd.log"
                 fi
             fi
 
         else
-            # ── Linux: Docker emulator via --profile android ──────────────────
-            # budtmo/docker-android provides Android 13 with ADB on port 5555.
-            # Requires /dev/kvm — bare metal only (VMs need nested virtualization).
-
-            if [[ ! -e /dev/kvm ]]; then
-                warn "/dev/kvm not found — Android Docker emulator requires bare metal or"
-                warn "nested virtualization. Skipping emulator setup."
-                warn "For physical device testing, connect via USB and set ADB_SERIAL accordingly."
+            # Linux: Docker handles the emulator via --profile android
+            if [[ "$EMU_OK" == "false" ]]; then
+                warn "/dev/kvm not available — Docker emulator skipped."
+                warn "For physical device testing, connect via USB and set ADB_SERIAL."
             else
-                info "KVM available — Android emulator will start with --profile android"
                 COMPOSE_ANDROID_PROFILE="--profile android"
-
-                # Verify kvm group membership — budtmo container runs the emulator as non-root
-                if ! id -nG "$USER" | grep -qw kvm; then
-                    warn "User $USER is not in the kvm group. The container needs kvm access:"
-                    warn "  sudo usermod -aG kvm $USER && newgrp kvm"
-                fi
-
-                # budtmo/docker-android connects ADB over TCP on port 5555.
-                # After the container starts, connect the host ADB server to it:
-                #   adb connect localhost:5555
-                # setup.sh does this after docker compose up (see below).
+                info "Android emulator will start with Docker (--profile android)"
                 ADB_SERIAL_VAL="localhost:5555"
             fi
         fi
     fi
+else
+    warn "Android testing skipped."
 fi
 
 # ── Generate secrets ──────────────────────────────────────────────────────────
