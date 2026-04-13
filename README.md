@@ -1,8 +1,8 @@
 # Ares — Autonomous Pentest Agent
 
-Ares is a penetration testing profile for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It turns a bare Ubuntu server into a fully autonomous pentest workstation, operated entirely through Discord — one forum thread per engagement.
+Ares is a penetration testing profile for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It turns a bare server or local workstation into a fully autonomous pentest platform — operated via Discord, a web UI ([SwarmClaw](https://swarmclaw.ai)), or both simultaneously.
 
-You send a target URL and credentials. The agent runs a full OWASP WSTG assessment, validates every finding with a working proof of concept, and delivers a Markdown/HTML/PDF report with PoC scripts attached to the thread. No manual steps during the engagement.
+You send a target URL and credentials. The agent runs a full OWASP WSTG assessment, validates every finding with a working proof of concept, and delivers a Markdown/HTML/PDF report with PoC scripts. No manual steps during the engagement.
 
 ---
 
@@ -15,17 +15,19 @@ You send a target URL and credentials. The agent runs a full OWASP WSTG assessme
 - **Detection engineering** — Sigma rules and MITRE ATT&CK Navigator layers for every validated finding
 - **Mobile testing** — static analysis (MoBSF), dynamic instrumentation (Frida SSL unpinning, crypto hooks), device control (ADB)
 - **Memory across engagements** — Hindsight extracts findings and patterns after each session, building institutional knowledge over time
-- **Discord-native delivery** — report, PoC scripts, and tarball attached directly to the engagement thread
+- **Dual interface** — Discord (one forum thread per engagement) or SwarmClaw web UI (local, no bot required); both can run simultaneously
 
 ---
 
 ## Architecture
 
 ```
-Discord Forum Thread
-        │  (one thread = one engagement)
-        ▼
-Hermes Gateway — pentest profile
+Discord Forum Thread          SwarmClaw Web UI
+(one thread = one engagement) (http://localhost:3456)
+        │                             │
+        └─────────────┬───────────────┘
+                      ▼
+Hermes Gateway — pentest profile (HTTP API :8643 + optional Discord)
         │
         ├── Claude Sonnet 4.6 (orchestrator — phases 0–2, tool execution, report assembly)
         │       │
@@ -58,9 +60,10 @@ This routing cuts cost ~43% vs full Opus without quality loss on tool execution 
 
 | Component | Purpose | Where it runs |
 |-----------|---------|---------------|
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.8.0+ | Orchestrator, Discord gateway, skill engine | Host (systemd user service) |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.8.0+ | Orchestrator, HTTP API, Discord gateway, skill engine | Host / Docker |
+| [SwarmClaw](https://swarmclaw.ai) | Web UI — multi-engagement dashboard, parallel session management | Docker container |
 | [pentest-ai](https://github.com/0xSteph/pentest-ai) | MCP server — 27 scan/exploit tools | Host (spawned by Hermes) |
-| [OWASP ZAP](https://www.zaproxy.org/) | Web scanner, spider, passive scanner | Docker container |
+| [OWASP ZAP](https://www.zaproxy.org/) | Web scanner, spider, passive scanner | Docker container (per engagement) |
 | [MoBSF](https://github.com/MobSF/Mobile-Security-Framework-MobSF) | Mobile static analysis (APK/IPA/APPX) | Docker container |
 | [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Headless Chromium — DOM testing, auth crawl | Host (spawned by Hermes) |
 | [Iris](https://github.com/munalabs/iris) | MCP servers for MoBSF, ADB, Frida | Host (spawned by Hermes) |
@@ -69,7 +72,7 @@ This routing cuts cost ~43% vs full Opus without quality loss on tool execution 
 | sqlmap, nuclei, ffuf, dalfox | Injection/scan CLI tools | Host (called by pentest-ai) |
 | nmap, nikto, subfinder, httpx | Recon CLI tools | Host (called by pentest-ai) |
 | testssl.sh | TLS/SSL analysis | Host |
-| Discord bot | Operator interface | Connects to Discord gateway |
+| Discord bot (optional) | Alternative operator interface | Connects to Discord gateway |
 
 **Minimum hardware:** 4 cores, 8GB RAM, 50GB disk, Ubuntu 22.04+
 
@@ -159,31 +162,44 @@ Hindsight uses Groq free tier (llama-3.3-70b-versatile) for memory extraction �
 
 ## Quick Start
 
-Two deployment paths: Docker Compose (fastest, self-contained) or bare-metal via Claude Code (full control, supports all features including Hindsight).
+Three deployment paths depending on your use case:
+
+| Deployment | Interface | Who it's for |
+|------------|-----------|--------------|
+| **Option A** — Docker Compose | SwarmClaw web UI | Teams, local pentester workstations |
+| **Option B** — Docker Compose + Discord | Discord forum threads | Personal / on-call security team |
+| **Option C** — Bare-metal via Claude Code | Discord + SwarmClaw | Production, Hindsight memory, physical device testing |
 
 ---
 
-### Option A: Docker Compose
+### Option A: Docker Compose — Local / Team (No Discord)
 
-**Prerequisites:** Docker Engine, Docker Compose v2, an Anthropic OAuth token (`claude login`), Google AI Studio key, Groq key, Discord bot.
+The default Docker Compose deployment. No Discord bot needed. SwarmClaw runs at `http://localhost:3456` as the multi-engagement web UI. Each conversation in SwarmClaw is an isolated engagement session.
+
+**Prerequisites:** Docker Engine, Docker Compose v2, Anthropic OAuth token (`claude login`). No root required — your user needs to be in the `docker` group (`sudo usermod -aG docker $USER`).
 
 ```bash
 git clone https://github.com/munalabs/ares.git
 cd ares/docker
+./setup.sh
+```
 
-cp .env.example .env
-$EDITOR .env   # fill in API keys and Discord tokens
+The script runs as your normal user. It prompts for your Anthropic token (and optionally Discord), auto-generates ZAP and MoBSF API keys, builds images, starts the stack, seeds SwarmClaw with the Ares Pentest agent, and verifies everything. First run takes ~5 minutes (npm install on first SwarmClaw start).
 
-# Create output directory (bind-mounted into all containers)
-sudo mkdir -p /opt/ares/pentest-output && sudo chmod 777 /opt/ares/pentest-output
+Open **http://localhost:3456** → start a new conversation → send your engagement brief.
 
-# Build images and start stack
-docker compose --project-name ares build
-docker compose --project-name ares up -d
+---
 
-# Get the MoBSF API key (generated at first start) and add to .env
-docker compose --project-name ares logs mobsf | grep "REST API Key"
-# Add MOBSF_API_KEY=<key> to .env, then:
+### Option B: Docker Compose + Discord
+
+Run `setup.sh` and answer **y** to the Discord prompt, or add credentials to `.env` after the fact:
+
+```bash
+# Add to .env (uncomment and fill in):
+DISCORD_BOT_TOKEN=your-bot-token
+DISCORD_ALLOWED_USERS=your-discord-user-id
+DISCORD_FREE_RESPONSE_CHANNELS=your-forum-channel-id
+
 docker compose --project-name ares restart hermes
 ```
 
@@ -192,20 +208,47 @@ With Android emulator (requires `/dev/kvm`, bare metal only):
 docker compose --project-name ares --profile android up -d
 ```
 
-**Services started:**
+---
+
+**Services started (both options):**
 
 | Container | Purpose | Port |
 |-----------|---------|------|
-| `ares-hermes` | Hermes + all MCP servers | Discord gateway |
+| `ares-swarmclaw` | SwarmClaw web UI — multi-engagement dashboard | 3456 |
+| `ares-hermes` | Hermes + all MCP servers + HTTP API | 8643 (internal) |
 | `ares-mobsf` | MoBSF static analysis (shared — hash-isolated) | 8100 |
 | `zap-{engagement-id}` | OWASP ZAP — spawned per engagement, torn down after delivery | dynamic 18000–19000 |
-| `ares-android` | Android emulator (optional) | 5555, 6080 |
+| `ares-android` | Android emulator (optional, `--profile android`, Linux+KVM only) | 5555, 6080 |
 
 The `ares-tools` image is the terminal that Hermes spawns for each session — it has all security tools (nmap, sqlmap, nuclei, ffuf, dalfox, subfinder, Playwright, testssl.sh, wordlists) pre-installed.
 
 ---
 
-### Option B: Bare-Metal via Claude Code
+### Mobile Testing (Android)
+
+ADB runs inside the `ares-hermes` container. USB and network devices are reached via a bridge to the ADB server on the host — no USB passthrough into Docker required.
+
+**Before starting the stack**, make the host ADB server listen on all interfaces:
+```bash
+adb kill-server && adb -a -P 5037 nodaemon server start
+```
+
+Three device scenarios:
+
+| Scenario | Setup | `ADB_SERIAL` in `.env` |
+|----------|-------|------------------------|
+| **Docker emulator** (Linux + `/dev/kvm`) | `docker compose --profile android up -d` | `localhost:5555` |
+| **Android Studio AVD** (macOS / Windows) | Start AVD in Android Studio normally | `localhost:5554` (or check `adb devices`) |
+| **USB phone** (connected to host) | Authorize once on the phone | serial from `adb devices` (e.g. `R58N12345`) |
+| **Wi-Fi / Tailscale phone** | Enable wireless ADB on phone | `<device-ip>:5555` |
+
+On Linux servers, `host.docker.internal` resolves via the `extra_hosts` mapping in `compose.yml`. If it doesn't, set `ANDROID_ADB_SERVER_HOST=172.17.0.1` in `.env` (the docker0 bridge IP).
+
+The Docker emulator (`ares-android`) requires `/dev/kvm` — bare metal only. VMs need nested virtualization enabled. ADB (`localhost:5555`) and the VNC screen viewer (`http://localhost:6080`) are bound to `127.0.0.1` only.
+
+---
+
+### Option C: Bare-Metal via Claude Code
 
 For production use, full Hindsight memory support, and physical device testing.
 
@@ -218,13 +261,15 @@ Deploy the Ares pentest stack following CLAUDE.md at https://github.com/munalabs
 Target machine: USER@HOST (password: PASSWORD)
 ```
 
-Claude Code reads `CLAUDE.md` and executes the full install remotely via SSH — tools, containers, Hermes profile, Discord gateway — stopping only at 6 human action points (OAuth login, API keys, Discord bot setup).
+Claude Code reads `CLAUDE.md` and executes the full install remotely via SSH — tools, containers, Hermes profile, Discord gateway, SwarmClaw — stopping only at human action points (OAuth login, API keys, Discord bot setup).
 
 ---
 
 ### Run an Engagement
 
-Create a thread in your pentest forum channel and send:
+**Via SwarmClaw (web UI):** Open `http://localhost:3456` → new conversation → paste your engagement brief.
+
+**Via Discord:** Create a thread in your pentest forum channel and send:
 
 ```
 Full web app assessment on https://staging.target.com
@@ -235,14 +280,17 @@ Destructive: yes
 Go.
 ```
 
-The agent runs all phases autonomously and delivers findings + report as Discord file attachments.
+The agent runs all phases autonomously and delivers findings + report as file attachments (Discord) or downloadable files from the SwarmClaw session.
 
 ---
 
 ## Key Design Decisions
 
+**Why SwarmClaw for team use?**
+Discord is great for personal use — one bot, one channel, mobile notifications. For a pentest team, Discord bots don't scale: one bot token = one WebSocket connection, per-engagement threading is manual, and report delivery is awkward as file attachments. SwarmClaw gives each pentester a proper multi-session dashboard, persistent session archives, and downloadable reports — no bot infrastructure needed.
+
 **Why Hermes?**
-Hermes is a multi-model orchestrator with native Discord integration, persistent sessions, skill routing, and MCP server management. Running a 100+ turn pentest session requires all of these — a single Claude conversation context would exhaust.
+Hermes is a multi-model orchestrator with persistent sessions, skill routing, HTTP API server, and MCP server management. Running a 100+ turn pentest session requires all of these — a single Claude conversation context would exhaust.
 
 **Why not ZAP MCP?**
 ZAP MCP addon v0.0.1 alpha hardcodes `127.0.0.1` as its bind address and enforces HTTPS. Both `-config` flags to override these are ignored at runtime. Ares uses ZAP via its REST API at `http://{container-ip}:8080/JSON/` instead.

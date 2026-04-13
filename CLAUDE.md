@@ -585,7 +585,54 @@ echo 'Profile .env written.'
 
 ---
 
-## PHASE 16: Gateway
+## PHASE 16: SwarmClaw Web UI
+
+SwarmClaw is the multi-engagement web UI. It connects to the Hermes HTTP API and gives each pentester a persistent session dashboard — no Discord required.
+
+```bash
+# Install SwarmClaw
+ssh USER@HOST 'npm install -g @swarmclawai/swarmclaw'
+
+# Create systemd user service
+ssh USER@HOST "cat > ~/.config/systemd/user/swarmclaw.service << 'UNIT'
+[Unit]
+Description=SwarmClaw Multi-Agent Runtime
+After=network.target hermes-gateway-pentest.service
+
+[Service]
+Type=simple
+Environment=PATH=/home/$USER/.local/npm-global/bin:/home/$USER/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=$(which swarmclaw || echo /home/$USER/.local/npm-global/bin/swarmclaw) start
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+UNIT
+"
+
+ssh USER@HOST '
+# Enable Hermes HTTP API for the pentest profile
+grep -q API_SERVER_ENABLED ~/.hermes/profiles/pentest/.env 2>/dev/null || \
+  echo "API_SERVER_ENABLED=true" >> ~/.hermes/profiles/pentest/.env
+grep -q API_SERVER_PORT ~/.hermes/profiles/pentest/.env 2>/dev/null || \
+  echo "API_SERVER_PORT=8643" >> ~/.hermes/profiles/pentest/.env
+
+systemctl --user daemon-reload
+systemctl --user enable swarmclaw
+systemctl --user start swarmclaw
+sleep 5
+systemctl --user is-active swarmclaw
+'
+```
+
+VERIFY: `ssh USER@HOST 'curl -s -o /dev/null -w "%{http_code}" http://localhost:3456'` should return 200.
+
+Open `http://HOST:3456` to access the SwarmClaw dashboard.
+
+---
+
+## PHASE 17: Gateway
 
 ```bash
 ssh USER@HOST 'HERMES_HOME=~/.hermes/profiles/pentest hermes gateway install'
@@ -613,7 +660,7 @@ Should show: `✓ discord connected as YourBotName#XXXX`
 
 ---
 
-## PHASE 17: Full Verification
+## PHASE 18: Full Verification
 
 ```bash
 ssh USER@HOST << 'ENDSSH'
@@ -649,8 +696,10 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   "$MOBSF_URL/api/v1/scans?page=1" 2>/dev/null)
 [ "$STATUS" = "200" ] && echo "MoBSF: OK" || echo "MoBSF: $STATUS"
 
-echo "--- Gateway ---"
+echo "--- Gateway + UI ---"
 systemctl --user is-active hermes-gateway-pentest 2>/dev/null || echo "pentest gateway: inactive"
+systemctl --user is-active swarmclaw 2>/dev/null || echo "swarmclaw: inactive"
+curl -s -o /dev/null -w "SwarmClaw HTTP: %{http_code}\n" http://localhost:3456 2>/dev/null || echo "SwarmClaw: not reachable"
 
 echo "--- Profile files ---"
 for f in config.yaml SOUL.md MEMORY.md; do
@@ -665,7 +714,7 @@ ENDSSH
 
 ---
 
-## PHASE 18: Smoke Test (Optional)
+## PHASE 19: Smoke Test (Optional)
 
 Test with OWASP Juice Shop — a deliberately vulnerable app:
 
@@ -675,7 +724,11 @@ sleep 15
 ssh USER@HOST 'curl -s -o /dev/null -w "%{http_code}" http://localhost:3001'
 ```
 
-**HUMAN ACTION #6:** In the pentest forum channel, create a new thread and send:
+**HUMAN ACTION #6:** Start a new engagement:
+
+**Via SwarmClaw (no Discord needed):** Open `http://HOST:3456` → new conversation → send:
+
+**Via Discord:** Create a new thread in the pentest forum channel and send:
 
 ```
 Full web app assessment on http://172.17.0.1:3001
@@ -685,7 +738,7 @@ User: jim@juice-sh.op / ncc-1701
 Destructive: yes. Go.
 ```
 
-Expect 5+ validated findings with PoC scripts attached.
+Expect 5+ validated findings with PoC scripts.
 
 Cleanup: `ssh USER@HOST 'docker stop juice-shop'`
 

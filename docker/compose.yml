@@ -16,6 +16,38 @@
 
 services:
 
+  # ── SwarmClaw — web UI for managing parallel engagements ──────────────────
+  # Connects to the Hermes HTTP API at http://hermes:8643 (Docker internal).
+  # Open at http://localhost:3456 after `docker compose up`.
+  #
+  # Discord and SwarmClaw are NOT mutually exclusive — both can run at once.
+  # For personal use: set DISCORD_BOT_TOKEN in .env (gateway connects to Discord).
+  # For team/local use: leave DISCORD_BOT_TOKEN unset (HTTP API only, no Discord).
+  swarmclaw:
+    image: node:22-slim
+    container_name: ares-swarmclaw
+    restart: unless-stopped
+    # npm global dir is persisted in swarmclaw-npm volume.
+    # First start installs the package (~60s); subsequent starts are instant.
+    command: >
+      sh -c "
+        export npm_config_prefix=/root/.npm-global
+        export PATH=/root/.npm-global/bin:$$PATH
+        if ! command -v swarmclaw > /dev/null 2>&1; then
+          npm install -g @swarmclawai/swarmclaw --quiet --no-progress;
+        fi
+        swarmclaw start
+      "
+    ports:
+      - "${SWARMCLAW_PORT:-3456}:3456"
+    environment:
+      HERMES_API_URL: "http://hermes:8643"
+    volumes:
+      - swarmclaw-data:/root/.swarmclaw
+      - swarmclaw-npm:/root/.npm-global
+    depends_on:
+      - hermes
+
   # ── Hermes + all MCP servers ──────────────────────────────────────────────
   hermes:
     build:
@@ -27,11 +59,26 @@ services:
     env_file: .env
     environment:
       HERMES_HOME: /root/.hermes/profiles/pentest
+      # ADB host bridge — connects the adb client inside this container to the
+      # ADB server running on the host machine. The host server manages:
+      #   - USB-connected phones (plug phone into host, authorize once)
+      #   - Android Studio / Docker emulators (running on or mapped to host)
+      # Requires the host ADB server to listen on all interfaces:
+      #   adb kill-server && adb -a -P 5037 nodaemon server start
+      # host.docker.internal resolves to the host IP on both Linux and macOS Docker.
+      ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST:-host.docker.internal}"
+      ANDROID_ADB_SERVER_PORT: "5037"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux + macOS Docker
     volumes:
-      # Docker socket — Hermes spawns terminal containers and per-engagement ZAP
+      # Docker socket — required: Hermes spawns ares-tools terminal containers and
+      # per-engagement ZAP containers at runtime. This grants the container full
+      # Docker API access (equivalent to root on the host). Accepted tradeoff:
+      # the alternative is running Hermes directly on the host, which is worse.
+      # Mitigate with a socket proxy (e.g. tecnativa/docker-socket-proxy) if needed.
       - /var/run/docker.sock:/var/run/docker.sock
       # Shared output — same host path mounted into terminal containers
-      - ${PENTEST_OUTPUT:-/opt/ares/pentest-output}:/pentest-output
+      - ${PENTEST_OUTPUT:-~/ares-pentest-output}:/pentest-output
     depends_on:
       mobsf:
         condition: service_healthy
@@ -65,8 +112,8 @@ services:
     restart: unless-stopped
     profiles: [android]
     ports:
-      - "5555:5555"   # ADB over TCP
-      - "6080:6080"   # VNC web viewer
+      - "127.0.0.1:5555:5555"   # ADB — localhost only (unauthenticated)
+      - "127.0.0.1:6080:6080"   # VNC web viewer — localhost only (unauthenticated)
     environment:
       EMULATOR_DEVICE: "Samsung Galaxy S10"
       WEB_VNC: "true"
@@ -75,3 +122,5 @@ services:
 
 volumes:
   mobsf-data:
+  swarmclaw-data:
+  swarmclaw-npm:

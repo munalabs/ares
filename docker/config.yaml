@@ -30,8 +30,8 @@ compression:
   threshold: 0.50
   target_ratio: 0.20
   protect_last_n: 30
-  summary_model: gemini-2.5-flash
-  summary_provider: google
+  summary_model: claude-haiku-4-5-20251001
+  summary_provider: anthropic
 
 auxiliary:
   delegation:
@@ -41,10 +41,6 @@ auxiliary:
     provider: auto
   web_extraction:
     provider: auto
-
-fallback_model:
-  provider: google
-  model: gemini-2.5-pro
 
 session:
   inactivity_minutes: 180
@@ -57,6 +53,7 @@ terminal:
     - ZAP_API_KEY
     - MOBSF_API_KEY
     - MOBSF_URL
+    - FRIDA_SERVER_ARCH
   docker_env:
     ZAP_API_KEY: "${ZAP_API_KEY}"
     MOBSF_URL: "http://172.17.0.1:8100"
@@ -119,6 +116,10 @@ mcp_servers:
     env:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
+      # ADB client inside the container talks to the host ADB server via bridge.
+      # Host must run: adb kill-server && adb -a -P 5037 nodaemon server start
+      ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST:-host.docker.internal}"
+      ANDROID_ADB_SERVER_PORT: "5037"
       ADB_SERIAL: "${ADB_SERIAL:-localhost:5555}"
 
   frida:
@@ -128,5 +129,9 @@ mcp_servers:
     env:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
-      FRIDA_SERVER_PATH: /opt/iris/frida-server/frida-server-android-x86_64
+      ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST:-host.docker.internal}"
+      ANDROID_ADB_SERVER_PORT: "5037"
+      # FRIDA_SERVER_ARCH: x86_64 — Linux Docker emulator, Intel Mac AVD
+      #                   arm64  — Apple Silicon AVD (M1/M2/M3/M4), most physical phones
+      FRIDA_SERVER_PATH: "/opt/iris/frida-server/frida-server-android-${FRIDA_SERVER_ARCH:-x86_64}"
       FRIDA_DEVICE: "${ADB_SERIAL:-localhost:5555}"
