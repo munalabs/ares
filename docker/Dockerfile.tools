@@ -19,11 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install sqlmap commix --break-system-packages
 
 # ── Go toolchain ─────────────────────────────────────────────────────────────
-# Pinned version + checksum — update both when upgrading Go
+# Architecture-aware: detects amd64 vs arm64 at build time.
 ARG GO_VERSION=1.23.2
-ARG GO_SHA256=542d3c1705f1c6a1c5a80d5dc62e2e45171af291e755d591c5e6531ef63b454e
-RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz \
-    && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+RUN GOARCH=$(dpkg --print-architecture | sed 's/armhf/arm/') \
+    && wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" -O /tmp/go.tar.gz \
     && tar -C /usr/local -xzf /tmp/go.tar.gz \
     && rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:/root/go/bin:$PATH"

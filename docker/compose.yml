@@ -83,7 +83,8 @@ services:
       # whereas config.yaml bash-style ${VAR:-default} syntax is NOT expanded by Hermes.
       TERMINAL_DOCKER_VOLUMES: >-
         ["${PENTEST_OUTPUT:-${HOME}/ares-pentest-output}:/pentest-output",
-         "${PENTEST_OUTPUT:-${HOME}/ares-pentest-output}:/home/user/pentest-output"]
+         "${PENTEST_OUTPUT:-${HOME}/ares-pentest-output}:/home/user/pentest-output",
+         "/var/run/docker.sock:/var/run/docker.sock"]
       # ADB host bridge — connects the adb client inside this container to the
       # ADB server running on the host machine. The host server manages:
       #   - USB-connected phones (plug phone into host, authorize once)
