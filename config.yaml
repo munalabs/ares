@@ -1,0 +1,119 @@
+# Ares — Hermes Pentest Profile
+# Drop-in config for ~/.hermes/profiles/pentest/config.yaml
+# See README.md for setup instructions and required environment variables.
+
+model:
+  default: claude-opus-4-6
+  provider: anthropic
+
+agent:
+  reasoning_effort: xhigh
+  max_turns: 150
+
+smart_model_routing:
+  enabled: false
+
+compression:
+  enabled: true
+  threshold: 0.50
+  target_ratio: 0.20
+  protect_last_n: 30
+  summary_model: gemini-2.5-flash
+  summary_provider: google
+
+auxiliary:
+  delegation:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  vision:
+    provider: auto
+  web_extraction:
+    provider: auto
+
+fallback_model:
+  provider: google
+  model: gemini-2.5-pro
+
+session:
+  inactivity_minutes: 180
+
+terminal:
+  backend: docker
+  docker_image: nikolaik/python-nodejs:python3.11-nodejs20
+  docker_forward_env:
+    - GITHUB_TOKEN
+    - ZAP_API_KEY
+    - ZAP_CONTAINER_IP
+    - MOBSF_API_KEY
+    - MOBSF_URL
+  docker_env:
+    ZAP_API_KEY: "${ZAP_API_KEY}"
+    ZAP_CONTAINER_IP: "${ZAP_CONTAINER_IP}"
+    MOBSF_URL: "${MOBSF_URL}"
+    MOBSF_API_KEY: "${MOBSF_API_KEY}"
+  docker_volumes:
+    - "${HOME}/pentest-output:/pentest-output"
+    - "${HOME}/pentest-output:/home/user/pentest-output"
+  container_cpu: 4
+  container_memory: 16384
+  container_persistent: true
+
+security:
+  tirith_enabled: true
+  tirith_fail_open: false
+  redact_secrets: true
+
+background:
+  notify_on_complete: true
+
+mcp_servers:
+  playwright:
+    command: npx
+    args:
+      - "@playwright/mcp@latest"
+      - --headless
+      - --no-sandbox
+      - --browser
+      - chromium
+  pentest-ai:
+    # MUST use /usr/bin/python3 (absolute path) — systemd PATH puts hermes venv first
+    # which lacks pentest-ai dependencies. PYTHONPATH required for relative imports.
+    # timeout: 1800 — start_engagement blocks 3-5 min; default 120s fires too early.
+    command: /usr/bin/python3
+    args:
+      - /home/YOURUSER/tools/pentest-ai/mcp_server/server.py
+    timeout: 1800
+    env:
+      PYTHONPATH: /home/YOURUSER/tools/pentest-ai
+  gitnexus:
+    command: npx
+    args:
+      - -y
+      - gitnexus@latest
+      - mcp
+  mobsf:
+    # iris MCP server — https://github.com/munalabs/iris
+    command: /usr/bin/python3
+    args:
+      - /home/YOURUSER/tools/iris/mobsf.py
+    env:
+      MOBSF_URL: "${MOBSF_URL}"
+      MOBSF_API_KEY: "${MOBSF_API_KEY}"
+      PENTEST_OUTPUT: /pentest-output
+  adb:
+    # iris MCP server — https://github.com/munalabs/iris
+    command: /usr/bin/python3
+    args:
+      - /home/YOURUSER/tools/iris/adb.py
+    env:
+      PENTEST_OUTPUT: /pentest-output
+      ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
+  frida:
+    # iris MCP server — https://github.com/munalabs/iris
+    command: /usr/bin/python3
+    args:
+      - /home/YOURUSER/tools/iris/frida.py
+    env:
+      PENTEST_OUTPUT: /pentest-output
+      ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
+      FRIDA_SERVER_PATH: /home/YOURUSER/tools/iris/frida-server/frida-server-android-x86_64

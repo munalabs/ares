@@ -1,0 +1,45 @@
+# Ares — Docker Compose for pentest dependencies
+# Usage: docker compose -f docker/compose.yml up -d
+
+services:
+  owasp-zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: owasp-zap
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    volumes:
+      - ~/zap-data:/zap/wrk
+    command: >
+      zap.sh -daemon -host 0.0.0.0 -port 8080
+      -config api.key=${ZAP_API_KEY}
+      -config api.addrs.addr.name=".*"
+      -config api.addrs.addr.regex=true
+
+  mobsf:
+    image: opensecurity/mobile-security-framework-mobsf:latest
+    container_name: mobsf
+    restart: unless-stopped
+    ports:
+      - "8100:8000"
+    volumes:
+      - ~/services/mobsf:/home/mobsf/.MobSF
+    # CRITICAL: MoBSF runs as uid 9901. Run before starting:
+    # sudo chown -R 9901:9901 ~/services/mobsf
+
+  android-emulator:
+    # Optional: Android emulator for dynamic analysis
+    # Requires /dev/kvm (bare metal only, not VMs without nested virt)
+    image: budtmo/docker-android:emulator_13.0
+    container_name: android-emulator
+    restart: unless-stopped
+    ports:
+      - "5555:5555"
+      - "6080:6080"
+    environment:
+      EMULATOR_DEVICE: "Samsung Galaxy S10"
+      WEB_VNC: "true"
+    devices:
+      - /dev/kvm
+    profiles:
+      - android  # Only start with: docker compose --profile android up -d
