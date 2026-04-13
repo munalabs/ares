@@ -467,16 +467,17 @@ else
 
     # Extract the key MoBSF generated internally.
     # Use perl instead of grep -oP — GNU-only, fails on macOS.
-    # tr -d '\r' strips Windows line endings from Docker log output on macOS.
+    # Capture only hex characters directly in the regex ([0-9a-fA-F]+) so no
+    # invisible bytes (\r, control chars) can sneak in from Docker log output.
     MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
-        | perl -ne 'print "$1\n" if /REST API Key:\s*(\S+)/' | tail -1 | tr -d '\r')
+        | perl -ne 'print "$1\n" if /REST API Key:\s*([0-9a-fA-F]+)/i' | tail -1)
     if [[ -z "$MOBSF_API_KEY" ]]; then
         MOBSF_API_KEY=$(docker logs ares-mobsf 2>&1 \
-            | perl -ne 'print "$1\n" if /Api Key\s*:\s*(\S+)/' | tail -1 | tr -d '\r')
+            | perl -ne 'print "$1\n" if /Api Key\s*:\s*([0-9a-fA-F]+)/i' | tail -1)
     fi
     [[ -n "$MOBSF_API_KEY" ]] || die "Could not extract MoBSF API key. Run: docker logs ares-mobsf"
-    [[ "$MOBSF_API_KEY" =~ ^[a-fA-F0-9]+$ ]] \
-        || die "MoBSF key has unexpected format: $MOBSF_API_KEY"
+    [[ ${#MOBSF_API_KEY} -ge 32 ]] \
+        || die "MoBSF key looks too short (${#MOBSF_API_KEY} chars): $MOBSF_API_KEY"
     success "MoBSF API key extracted"
 fi
 
