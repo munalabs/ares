@@ -70,7 +70,7 @@ RUN npm install -g @playwright/mcp@latest \
 
 # ── Profile structure ─────────────────────────────────────────────────────────
 RUN mkdir -p \
-    /root/.hermes/profiles/pentest/skills/pentest-orchestrate \
+    /root/.hermes/profiles/pentest/skills \
     /root/.hermes/memories \
     /pentest-output
 
@@ -78,8 +78,9 @@ COPY SOUL.md   /root/.hermes/profiles/pentest/SOUL.md
 COPY MEMORY.md /root/.hermes/profiles/pentest/MEMORY.md
 COPY docker/config.yaml \
      /root/.hermes/profiles/pentest/config.yaml
-COPY skills/pentest-orchestrate/SKILL.md \
-     /root/.hermes/profiles/pentest/skills/pentest-orchestrate/SKILL.md
+
+# All skills — pentest-orchestrate, cybersec/* (25 pentest skills), pentesting/*
+COPY skills/ /root/.hermes/profiles/pentest/skills/
 
 # ── Runtime ───────────────────────────────────────────────────────────────────
 ENV HERMES_HOME=/root/.hermes/profiles/pentest
