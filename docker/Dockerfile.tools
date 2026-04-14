@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
-    && (apt-get install -y --no-install-recommends whatweb 2>/dev/null || true) \
+    && (apt-get install -y --no-install-recommends whatweb libxml-writer-perl libjson-perl 2>/dev/null || true) \
     && (apt-get install -y android-sdk-platform-tools 2>/dev/null || true) \
     && (apt-get install -y adb 2>/dev/null || true) \
     && mkdir -p /usr/lib/android-sdk/platform-tools \
@@ -34,8 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install sqlmap commix wafw00f sslyze --break-system-packages
 
 # ── jwt_tool (not on PyPI — install from source) ─────────────────────────────
-RUN pip3 install termcolor cprint pycryptodomex requests --break-system-packages \
-    && git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool \
+RUN git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool \
+    && pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages \
     && chmod +x /opt/jwt_tool/jwt_tool.py \
     && ln -sf /opt/jwt_tool/jwt_tool.py /usr/local/bin/jwt_tool
 
