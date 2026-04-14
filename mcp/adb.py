@@ -15,7 +15,16 @@ from fastmcp import FastMCP
 
 mcp = FastMCP("adb")
 
-ADB = os.environ.get("ADB_PATH", "adb")
+_ADB_BIN = os.environ.get("ADB_PATH", "adb")
+_ADB_SERVER_HOST = os.environ.get("ANDROID_ADB_SERVER_HOST", "")
+_ADB_SERVER_PORT = os.environ.get("ANDROID_ADB_SERVER_PORT", "")
+# Base adb command — include -H/-P if a remote server is configured
+ADB_BASE: list[str] = [_ADB_BIN]
+if _ADB_SERVER_HOST:
+    ADB_BASE += ["-H", _ADB_SERVER_HOST]
+if _ADB_SERVER_PORT:
+    ADB_BASE += ["-P", _ADB_SERVER_PORT]
+ADB = _ADB_BIN  # kept for backward compat with any direct uses below
 PENTEST_OUTPUT = Path(os.environ.get("PENTEST_OUTPUT", "/pentest-output"))
 DEFAULT_SERIAL = os.environ.get("ADB_SERIAL", "")  # e.g. "emulator-5554" or "192.168.x.x:5555"
 
@@ -43,7 +52,7 @@ def _serial_args(serial: Optional[str]) -> list[str]:
 
 
 async def _adb(serial: Optional[str], *args, timeout: int = 30) -> tuple[int, str, str]:
-    return await _run([ADB] + _serial_args(serial) + list(args), timeout=timeout)
+    return await _run(ADB_BASE + _serial_args(serial) + list(args), timeout=timeout)
 
 
 def _fmt(rc: int, stdout: str, stderr: str) -> str:
@@ -60,7 +69,7 @@ def _fmt(rc: int, stdout: str, stderr: str) -> str:
 @mcp.tool()
 async def list_devices() -> str:
     """List all connected ADB devices (real devices, emulators, TCP connections)."""
-    rc, out, err = await _run([ADB, "devices", "-l"])
+    rc, out, err = await _run(ADB_BASE + ["devices", "-l"])
     lines = [l for l in out.strip().splitlines() if l and not l.startswith("List of")]
     if not lines:
         return (
@@ -77,14 +86,14 @@ async def adb_connect(host_port: str) -> str:
     Connect to an Android device or emulator over TCP/IP.
     host_port: e.g. '192.168.1.100:5555' or 'emulator-5554'
     """
-    rc, out, err = await _run([ADB, "connect", host_port])
+    rc, out, err = await _run(ADB_BASE + ["connect", host_port])
     return _fmt(rc, out, err)
 
 
 @mcp.tool()
 async def adb_disconnect(host_port: Optional[str] = None) -> str:
     """Disconnect from a TCP device. Omit host_port to disconnect all."""
-    args = [ADB, "disconnect"]
+    args = ADB_BASE + ["disconnect"]
     if host_port:
         args.append(host_port)
     rc, out, err = await _run(args)
@@ -579,7 +588,7 @@ async def connect_emulator(host: str = "localhost", port: int = 5555) -> str:
     Connect to an Android emulator running on the server or network.
     For docker-android: host='localhost', port=5555
     """
-    rc, out, err = await _run([ADB, "connect", f"{host}:{port}"])
+    rc, out, err = await _run(ADB_BASE + ["connect", f"{host}:{port}"])
     return _fmt(rc, out, err)
 
 
