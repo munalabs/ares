@@ -81,7 +81,7 @@ services:
       #   adb kill-server && adb -a -P 5037 nodaemon server start
       # host.docker.internal resolves to the host IP on both Linux and macOS Docker.
       ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST:-host.docker.internal}"
-      ANDROID_ADB_SERVER_PORT: "5037"
+      ANDROID_ADB_SERVER_PORT: "${ANDROID_ADB_SERVER_PORT:-5037}"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Linux + macOS Docker
     volumes:
