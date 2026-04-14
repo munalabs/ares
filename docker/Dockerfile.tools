@@ -6,10 +6,20 @@ LABEL org.opencontainers.image.description="Security tools terminal — spawned 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ── System tools ──────────────────────────────────────────────────────────────
+# docker-ce-cli: docker.io on Debian trixie only ships the daemon (dockerd),
+# not the CLI binary. Install the official Docker CLI instead.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nmap curl wget git jq \
-    ca-certificates libssl-dev openssl \
-    docker.io \
+    ca-certificates libssl-dev openssl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+       | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+       https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
     && (apt-get install -y --no-install-recommends nikto 2>/dev/null || true) \
     && (apt-get install -y android-sdk-platform-tools 2>/dev/null \
         || apt-get install -y adb 2>/dev/null || true) \
@@ -29,6 +39,9 @@ ENV PATH="/usr/local/go/bin:/root/go/bin:$PATH"
 
 # ── Go security tools — pinned versions ──────────────────────────────────────
 # Bump versions here when updating; @latest is intentionally avoided (supply chain).
+# GOBIN=/usr/local/bin: Hermes mounts a sandbox dir over /root at runtime,
+# which hides /root/go/bin. Installing to /usr/local/bin avoids the masking.
+ENV GOBIN=/usr/local/bin
 RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.8 \
     && go install github.com/ffuf/ffuf/v2@v2.1.0 \
     && go install github.com/hahwul/dalfox/v2@v2.9.2 \

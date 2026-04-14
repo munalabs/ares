@@ -81,10 +81,6 @@ services:
       HERMES_WEB_PORT: "${HERMES_WEB_PORT:-9119}"
       # Override docker_volumes from config.yaml — compose expands ${PENTEST_OUTPUT} here,
       # whereas config.yaml bash-style ${VAR:-default} syntax is NOT expanded by Hermes.
-      TERMINAL_DOCKER_VOLUMES: >-
-        ["${PENTEST_OUTPUT:-${HOME}/ares-pentest-output}:/pentest-output",
-         "${PENTEST_OUTPUT:-${HOME}/ares-pentest-output}:/home/user/pentest-output",
-         "/var/run/docker.sock:/var/run/docker.sock"]
       # ADB host bridge — connects the adb client inside this container to the
       # ADB server running on the host machine. The host server manages:
       #   - USB-connected phones (plug phone into host, authorize once)
@@ -103,8 +99,10 @@ services:
       # the alternative is running Hermes directly on the host, which is worse.
       # Mitigate with a socket proxy (e.g. tecnativa/docker-socket-proxy) if needed.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Shared output — same host path mounted into terminal containers
-      - ${PENTEST_OUTPUT:-~/ares-pentest-output}:/pentest-output
+      # Named volume — shared with ares-tools terminal containers by name.
+      # config.yaml references "ares-pentest-output:/pentest-output" so Docker resolves
+      # the same named volume whether it's hermes or a spawned terminal container.
+      - ares-pentest-output:/pentest-output
     depends_on:
       mobsf:
         condition: service_healthy
@@ -150,3 +148,8 @@ volumes:
   mobsf-data:
   swarmclaw-data:
   swarmclaw-npm:
+  # Pentest output — named volume shared between hermes and ares-tools terminal containers.
+  # On Linux production the data lives inside Docker's volume store; use
+  # `docker cp` or bind a host path via PENTEST_OUTPUT_DEVICE in .env if you
+  # need direct host access (e.g. for report delivery).
+  ares-pentest-output:

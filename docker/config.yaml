@@ -60,10 +60,15 @@ terminal:
     MOBSF_API_KEY: "${MOBSF_API_KEY}"
     # ZAP_URL is NOT set here — it's written to /tmp/engagement.env per engagement
     # (each engagement gets its own ZAP on a dynamic port)
-  # docker_volumes is intentionally absent here — the gateway overwrites
-  # TERMINAL_DOCKER_VOLUMES from config.yaml, clobbering the compose.yml value.
-  # The correct host path is set via TERMINAL_DOCKER_VOLUMES in compose.yml,
-  # where Docker Compose expands ${PENTEST_OUTPUT} before the container starts.
+  # docker_volumes uses static paths so the gateway doesn't fall back to defaults.
+  # - ares-pentest-output is a named Docker volume shared with the hermes container.
+  #   Named volumes are resolved by the Docker daemon regardless of which container
+  #   mounts them — no host path expansion needed.
+  # - /var/run/docker.sock is the Docker daemon socket (host path, always absolute).
+  docker_volumes:
+    - "ares-pentest-output:/pentest-output"
+    - "ares-pentest-output:/home/user/pentest-output"
+    - "/var/run/docker.sock:/var/run/docker.sock"
   container_cpu: 4
   container_memory: 16384
   container_persistent: true
