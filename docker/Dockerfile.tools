@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
-    && (apt-get install -y --no-install-recommends nikto 2>/dev/null || true) \
+    && (apt-get install -y --no-install-recommends nikto whatweb 2>/dev/null || true) \
     && (apt-get install -y android-sdk-platform-tools 2>/dev/null || true) \
     && (apt-get install -y adb 2>/dev/null || true) \
     && mkdir -p /usr/lib/android-sdk/platform-tools \
@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python security tools ─────────────────────────────────────────────────────
-RUN pip3 install sqlmap commix --break-system-packages
+RUN pip3 install sqlmap commix wafw00f sslyze jwt_tool --break-system-packages
 
 # ── Go toolchain ─────────────────────────────────────────────────────────────
 # Architecture-aware: detects amd64 vs arm64 at build time.
@@ -52,6 +52,7 @@ RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.8 \
     && go install github.com/hahwul/dalfox/v2@v2.9.2 \
     && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.6 \
     && go install github.com/projectdiscovery/httpx/cmd/httpx@v1.6.8 \
+    && go install github.com/zricethezav/gitleaks/v8@v8.21.2 \
     && nuclei -update-templates 2>/dev/null || true
 
 # ── Playwright (DOM testing + authenticated crawl) ────────────────────────────
