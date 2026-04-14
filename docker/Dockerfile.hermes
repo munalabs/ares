@@ -12,11 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget git ca-certificates gnupg \
     build-essential pkg-config libssl-dev \
     docker.io jq xz-utils \
-    && (apt-get install -y --no-install-recommends android-sdk-platform-tools 2>/dev/null \
-        || apt-get install -y --no-install-recommends adb 2>/dev/null || true) \
+    && (apt-get install -y --no-install-recommends android-sdk-platform-tools 2>/dev/null || true) \
+    && (apt-get install -y --no-install-recommends adb 2>/dev/null || true) \
     && mkdir -p /usr/lib/android-sdk/platform-tools \
     && ([ -f /usr/lib/android-sdk/platform-tools/adb ] \
-        || ln -sf "$(command -v adb)" /usr/lib/android-sdk/platform-tools/adb) \
+        || { [ -f /usr/bin/adb ] && ln -sf /usr/bin/adb /usr/lib/android-sdk/platform-tools/adb; } \
+        || true) \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js 22 (playwright MCP + gitnexus)

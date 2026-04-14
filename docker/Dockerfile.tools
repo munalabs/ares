@@ -22,11 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
     && (apt-get install -y --no-install-recommends nikto 2>/dev/null || true) \
-    && (apt-get install -y android-sdk-platform-tools 2>/dev/null \
-        || apt-get install -y adb 2>/dev/null || true) \
+    && (apt-get install -y android-sdk-platform-tools 2>/dev/null || true) \
+    && (apt-get install -y adb 2>/dev/null || true) \
     && mkdir -p /usr/lib/android-sdk/platform-tools \
     && ([ -f /usr/lib/android-sdk/platform-tools/adb ] \
-        || ln -sf "$(command -v adb)" /usr/lib/android-sdk/platform-tools/adb) \
+        || { [ -f /usr/bin/adb ] && ln -sf /usr/bin/adb /usr/lib/android-sdk/platform-tools/adb; } \
+        || true) \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python security tools ─────────────────────────────────────────────────────
