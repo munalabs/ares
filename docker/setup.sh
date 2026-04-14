@@ -136,6 +136,12 @@ if [[ "$ANDROID_ONLY" == "false" ]]; then
     # Reclaim ownership later if needed:
     #   docker run --rm -v "$PENTEST_OUTPUT":/out alpine chown -R $(id -u):$(id -g) /out
     success "Output directory: $PENTEST_OUTPUT"
+
+# ── APK upload directory ──────────────────────────────────────────────────────
+# Bind-mounted into hermes as /uploads — drop APKs here on the host.
+    UPLOADS_DIR="$HOME/ares-uploads"
+    mkdir -p "$UPLOADS_DIR"
+    success "APK upload directory: $UPLOADS_DIR"
 fi  # end ANDROID_ONLY==false
 
 # ── Android / ADB (optional) ──────────────────────────────────────────────────
@@ -150,8 +156,10 @@ HOST_ARCH="$(uname -m)"  # x86_64 | arm64
 # Defaults (overridden by detection below)
 ADB_SERIAL_VAL="localhost:5555"
 ANDROID_ADB_SERVER_HOST_VAL="host.docker.internal"
+ANDROID_ADB_SERVER_PORT_VAL="5037"
 FRIDA_SERVER_ARCH_VAL="x86_64"
 COMPOSE_ANDROID_PROFILE=""
+SOCAT_OK=false
 
 echo
 echo "────────────────────────────────────────────────────────────"
@@ -216,14 +224,14 @@ if [[ "$HOST_OS" == "Darwin" ]]; then
     # Frida arch follows chip
     if [[ "$HOST_ARCH" == "arm64" ]]; then
         FRIDA_SERVER_ARCH_VAL="arm64"
-        ADB_SERIAL_VAL="emulator-5554"
+        ADB_SERIAL_VAL="127.0.0.1:5555"
         echo
-        info "Platform: macOS Apple Silicon → ARM64 AVD, serial emulator-5554"
+        info "Platform: macOS Apple Silicon → ARM64 AVD, serial 127.0.0.1:5555 (TCP)"
     else
         FRIDA_SERVER_ARCH_VAL="x86_64"
-        ADB_SERIAL_VAL="emulator-5554"
+        ADB_SERIAL_VAL="127.0.0.1:5555"
         echo
-        info "Platform: macOS Intel → x86_64 AVD, serial emulator-5554"
+        info "Platform: macOS Intel → x86_64 AVD, serial 127.0.0.1:5555 (TCP)"
     fi
 
 else
@@ -245,14 +253,28 @@ else
     info "Platform: Linux → Docker emulator (--profile android), serial localhost:5555"
 fi
 
-# ── ADB server instruction ─────────────────────────────────────────────────────
+# ── ADB server / socat pre-flight ────────────────────────────────────────────
 echo
-echo "  IMPORTANT: The host ADB server must listen on all interfaces so the"
-echo "  Hermes container can reach it. Run this in a separate terminal now:"
-echo
-echo "    adb kill-server && adb -a -P 5037 nodaemon server start"
-echo
-echo "  (On Linux docker0 IP is the host; on macOS host.docker.internal resolves it)"
+if [[ "$HOST_OS" == "Darwin" ]]; then
+    # macOS: Android Studio holds adb on 127.0.0.1 and fights adb -a.
+    # Use socat to bridge the Docker Desktop VM → Mac ADB server.
+    if ! command -v socat >/dev/null 2>&1; then
+        warn "socat not installed — needed to bridge Docker→ADB on macOS."
+        echo "       → brew install socat"
+        echo "  After installing, re-run: ./setup.sh --android"
+    else
+        SOCAT_OK=true
+        # Docker Desktop VM host interface (containers reach the Mac via this IP)
+        DOCKER_HOST_IP=$(ifconfig 2>/dev/null \
+            | grep -E "inet 192\.168\.64\." | awk '{print $2}' | head -1)
+        [[ -n "$DOCKER_HOST_IP" ]] || DOCKER_HOST_IP="192.168.64.1"
+        # Auto-configure for macOS Docker Desktop
+        ANDROID_ADB_SERVER_HOST_VAL="$DOCKER_HOST_IP"
+        ANDROID_ADB_SERVER_PORT_VAL="5038"
+        ADB_SERIAL_VAL="127.0.0.1:5555"
+        success "socat found — ADB bridge will use ${DOCKER_HOST_IP}:5038"
+    fi
+fi
 echo "────────────────────────────────────────────────────────────"
 
 # ── Ask ───────────────────────────────────────────────────────────────────────
@@ -270,10 +292,16 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
     read -rp "  ADB_SERIAL [${ADB_SERIAL_VAL}]: " _input
     ADB_SERIAL_VAL="${_input:-$ADB_SERIAL_VAL}"
 
-    echo "  (host.docker.internal works on macOS + Linux Docker Desktop;"
-    echo "   on bare-metal Linux use 172.17.0.1 if host.docker.internal doesn't resolve)"
-    read -rp "  ANDROID_ADB_SERVER_HOST [${ANDROID_ADB_SERVER_HOST_VAL}]: " _input
-    ANDROID_ADB_SERVER_HOST_VAL="${_input:-$ANDROID_ADB_SERVER_HOST_VAL}"
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+        echo "  (macOS: auto-configured via socat → ${ANDROID_ADB_SERVER_HOST_VAL}:${ANDROID_ADB_SERVER_PORT_VAL})"
+        echo "  Override ANDROID_ADB_SERVER_HOST/PORT in .env to change."
+    else
+        echo "  (host.docker.internal for Docker Desktop; 172.17.0.1 for bare-metal Linux)"
+        read -rp "  ANDROID_ADB_SERVER_HOST [${ANDROID_ADB_SERVER_HOST_VAL}]: " _input
+        ANDROID_ADB_SERVER_HOST_VAL="${_input:-$ANDROID_ADB_SERVER_HOST_VAL}"
+        read -rp "  ANDROID_ADB_SERVER_PORT [${ANDROID_ADB_SERVER_PORT_VAL}]: " _input
+        ANDROID_ADB_SERVER_PORT_VAL="${_input:-$ANDROID_ADB_SERVER_PORT_VAL}"
+    fi
 
     echo
     echo "  Frida server architecture (must match your Android device CPU):"
@@ -289,17 +317,50 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
         || die "ADB_SERIAL contains unexpected characters: $ADB_SERIAL_VAL"
     [[ "$ANDROID_ADB_SERVER_HOST_VAL" =~ ^[A-Za-z0-9._-]+$ ]] \
         || die "ANDROID_ADB_SERVER_HOST contains unexpected characters: $ANDROID_ADB_SERVER_HOST_VAL"
+    [[ "$ANDROID_ADB_SERVER_PORT_VAL" =~ ^[0-9]+$ ]] \
+        || die "ANDROID_ADB_SERVER_PORT must be numeric: $ANDROID_ADB_SERVER_PORT_VAL"
 
-    # Restart ADB server bound to all interfaces
-    adb kill-server 2>/dev/null || true
-    if adb -a -P 5037 nodaemon server start >/dev/null 2>&1; then
-        success "Host ADB server listening on 0.0.0.0:5037"
+    # Start ADB bridge
+    if [[ "$HOST_OS" == "Darwin" && "$SOCAT_OK" == "true" ]]; then
+        # Kill any existing socat on port 5038 and start fresh
+        pkill -f "socat.*TCP-LISTEN:5038" 2>/dev/null || true
+        sleep 1
+        nohup socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037 \
+            >/tmp/ares-socat.log 2>&1 &
+        SOCAT_PID=$!
+        sleep 1
+        if kill -0 "$SOCAT_PID" 2>/dev/null; then
+            success "socat ADB bridge: 0.0.0.0:5038 → localhost:5037 (PID $SOCAT_PID)"
+        else
+            warn "socat failed to start — check /tmp/ares-socat.log"
+            warn "Manual: socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037"
+        fi
+        # Enable TCP on emulator and connect (so ADB server tracks it by TCP serial)
+        if [[ "$ADB_SERIAL_VAL" == "127.0.0.1:5555" ]]; then
+            adb -s emulator-5554 tcpip 5555 2>/dev/null || true
+            sleep 1
+            if adb connect 127.0.0.1:5555 2>/dev/null | grep -q "connected"; then
+                success "ADB: emulator connected at 127.0.0.1:5555"
+            else
+                warn "Emulator not running yet — connect it later:"
+                warn "  adb -s emulator-5554 tcpip 5555 && adb connect 127.0.0.1:5555"
+            fi
+        fi
+    elif [[ "$HOST_OS" == "Darwin" && "$SOCAT_OK" == "false" ]]; then
+        warn "socat not available — ADB MCP will not work until socat is installed."
+        warn "Install: brew install socat  then re-run: ./setup.sh --android"
     else
-        warn "Could not start ADB server — start it manually:"
-        warn "  adb kill-server && adb -a -P 5037 nodaemon server start"
+        # Linux: adb -a works (no competing ADB server)
+        adb kill-server 2>/dev/null || true
+        if adb -a -P 5037 nodaemon server start >/dev/null 2>&1; then
+            success "Host ADB server listening on 0.0.0.0:5037"
+        else
+            warn "Could not bind ADB on all interfaces — start it manually:"
+            warn "  adb kill-server && adb -a -P 5037 nodaemon server start"
+        fi
     fi
 
-    success "ADB configured (serial: $ADB_SERIAL_VAL, frida: $FRIDA_SERVER_ARCH_VAL)"
+    success "ADB configured (serial: $ADB_SERIAL_VAL, host: ${ANDROID_ADB_SERVER_HOST_VAL}:${ANDROID_ADB_SERVER_PORT_VAL}, frida: $FRIDA_SERVER_ARCH_VAL)"
 
     # ── Emulator setup ────────────────────────────────────────────────────────
     echo
@@ -390,19 +451,27 @@ if [[ "$ANDROID_ONLY" == "true" ]]; then
     sed -i.bak \
         -e '/^ADB_SERIAL=/d' \
         -e '/^ANDROID_ADB_SERVER_HOST=/d' \
+        -e '/^ANDROID_ADB_SERVER_PORT=/d' \
         -e '/^FRIDA_SERVER_ARCH=/d' \
         -e '/^# ADB_SERIAL=/d' \
         -e '/^# ANDROID_ADB_SERVER_HOST=/d' \
+        -e '/^# ANDROID_ADB_SERVER_PORT=/d' \
         -e '/^# FRIDA_SERVER_ARCH=/d' \
         .env && rm -f .env.bak
 
     if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
         {
-            printf '\nADB_SERIAL=%s\n'             "$ADB_SERIAL_VAL"
-            printf 'ANDROID_ADB_SERVER_HOST=%s\n'  "$ANDROID_ADB_SERVER_HOST_VAL"
-            printf 'FRIDA_SERVER_ARCH=%s\n'         "$FRIDA_SERVER_ARCH_VAL"
+            printf '\nADB_SERIAL=%s\n'               "$ADB_SERIAL_VAL"
+            printf 'ANDROID_ADB_SERVER_HOST=%s\n'    "$ANDROID_ADB_SERVER_HOST_VAL"
+            printf 'ANDROID_ADB_SERVER_PORT=%s\n'    "$ANDROID_ADB_SERVER_PORT_VAL"
+            printf 'FRIDA_SERVER_ARCH=%s\n'           "$FRIDA_SERVER_ARCH_VAL"
         } >> .env
         success ".env updated"
+        if [[ "$HOST_OS" == "Darwin" && "$SOCAT_OK" == "true" ]]; then
+            warn "socat proxy will stop when this terminal closes."
+            warn "Add to your shell profile for persistence:"
+            warn "  nohup socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037 >/tmp/ares-socat.log 2>&1 &"
+        fi
     else
         warn "Android skipped — .env unchanged"
     fi
@@ -516,13 +585,16 @@ ENVEOF
     printf 'HERMES_API_KEY=%s\n'       "$HERMES_API_KEY"
     printf 'MOBSF_API_KEY=%s\n'        "$MOBSF_API_KEY"
     printf '\nPENTEST_OUTPUT=%s\n'     "$PENTEST_OUTPUT"
+    printf 'UPLOADS_DIR=%s\n'         "$HOME/ares-uploads"
     if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
         printf '\nADB_SERIAL=%s\n'                  "$ADB_SERIAL_VAL"
         printf 'ANDROID_ADB_SERVER_HOST=%s\n'       "$ANDROID_ADB_SERVER_HOST_VAL"
+        printf 'ANDROID_ADB_SERVER_PORT=%s\n'       "$ANDROID_ADB_SERVER_PORT_VAL"
         printf 'FRIDA_SERVER_ARCH=%s\n'             "$FRIDA_SERVER_ARCH_VAL"
     else
         printf '\n# ADB_SERIAL=localhost:5555\n'
         printf '# ANDROID_ADB_SERVER_HOST=host.docker.internal\n'
+        printf '# ANDROID_ADB_SERVER_PORT=5037\n'
         printf '# FRIDA_SERVER_ARCH=x86_64\n'
     fi
 } >> .env
@@ -619,9 +691,16 @@ echo "  Ares is running."
 echo
 echo "  Web UI:    http://localhost:${WEBUI_PORT:-3000}"
 echo "  Output:    docker volume inspect ares_ares-pentest-output"
+echo "  APKs:      drop files in ~/ares-uploads/  →  accessible at /uploads/ in hermes"
 echo
 echo "  Start an engagement:"
-echo "    Open http://localhost:${WORKSPACE_PORT:-3000} → new session → send:"
+echo "    Open http://localhost:${WEBUI_PORT:-3000} → new session → send:"
 echo '    "Full web app assessment on https://target.example.com'
 echo '    Scope: target.example.com. Auth: admin/pass. Go."'
+if [[ "$HOST_OS" == "Darwin" && "$SOCAT_OK" == "true" && "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
+    echo
+    echo "  Android: socat proxy is running for this session."
+    echo "  To persist across reboots, add to ~/.zshrc or ~/.bash_profile:"
+    echo "    nohup socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037 >/tmp/ares-socat.log 2>&1 &"
+fi
 echo "────────────────────────────────────────────────────────────"
