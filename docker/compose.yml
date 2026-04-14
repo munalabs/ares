@@ -16,38 +16,23 @@
 
 services:
 
-  # ── SwarmClaw — web UI for managing parallel engagements ──────────────────
+  # ── Hermes Workspace — web UI for managing parallel engagements ──────────
   # Connects to the Hermes HTTP API at http://hermes:8643 (Docker internal).
-  # Open at http://localhost:3456 after `docker compose up`.
-  #
-  # Discord and SwarmClaw are NOT mutually exclusive — both can run at once.
-  # For personal use: set DISCORD_BOT_TOKEN in .env (gateway connects to Discord).
-  # For team/local use: leave DISCORD_BOT_TOKEN unset (HTTP API only, no Discord).
-  swarmclaw:
-    image: node:22
-    container_name: ares-swarmclaw
-    restart: on-failure
-    # npm global dir is persisted in swarmclaw-npm volume.
-    # First start installs the package (~60s); subsequent starts are instant.
-    command: >
-      sh -c "
-        export npm_config_prefix=/root/.npm-global
-        export PATH=/root/.npm-global/bin:$$PATH
-        if ! command -v swarmclaw > /dev/null 2>&1; then
-          rm -rf /root/.npm-global/lib/node_modules/@swarmclawai/swarmclaw 2>/dev/null || true;
-          npm install -g @swarmclawai/swarmclaw --quiet --no-progress || exit 1;
-        fi
-        swarmclaw start
-      "
+  # Open at http://localhost:3000 after `docker compose up`.
+  # Builds from source on first start (~2 min); subsequent starts are instant.
+  hermes-workspace:
+    build:
+      context: https://github.com/outsourc-e/hermes-workspace.git
+      dockerfile: docker/workspace/Dockerfile
+    image: ares-hermes-workspace:latest
+    container_name: ares-workspace
+    restart: unless-stopped
     ports:
-      - "${SWARMCLAW_PORT:-3456}:3456"
+      - "${WORKSPACE_PORT:-3000}:3000"
     environment:
       HERMES_API_URL: "http://hermes:8643"
-      # Passed to seed script so it can encrypt + store the Hermes API key credential
-      HERMES_API_KEY: "${HERMES_API_KEY:-}"
-    volumes:
-      - swarmclaw-data:/root/.swarmclaw
-      - swarmclaw-npm:/root/.npm-global
+      HERMES_API_TOKEN: "${HERMES_API_KEY:-}"
+      HERMES_PASSWORD: "${WORKSPACE_PASSWORD:-}"
     depends_on:
       - hermes
 
@@ -146,8 +131,6 @@ services:
 
 volumes:
   mobsf-data:
-  swarmclaw-data:
-  swarmclaw-npm:
   # Pentest output — named volume shared between hermes and ares-tools terminal containers.
   # On Linux production the data lives inside Docker's volume store; use
   # `docker cp` or bind a host path via PENTEST_OUTPUT_DEVICE in .env if you

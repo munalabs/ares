@@ -118,7 +118,7 @@ if [[ "$ANDROID_ONLY" == "false" ]]; then
             [[ -n "$DISCORD_FREE_RESPONSE_CHANNELS" ]] || die "DISCORD_FREE_RESPONSE_CHANNELS cannot be empty."
             success "Discord configured"
         else
-            warn "Discord skipped — SwarmClaw web UI only (http://localhost:3456)"
+            warn "Discord skipped — Hermes Workspace web UI only (http://localhost:${WORKSPACE_PORT:-3000})"
         fi
     fi
 
@@ -538,49 +538,16 @@ docker compose --project-name ares build hermes
 docker build -f Dockerfile.tools -t ares-tools:latest ..
 success "Images built"
 
-# ── Pre-build SwarmClaw ───────────────────────────────────────────────────────
-# SwarmClaw's npm package has no pre-built Next.js bundle, so it builds at
-# runtime. On Docker Desktop with ≤4GB RAM the build worker gets OOM-killed
-# competing with other containers. Build in isolation here so the artifact
-# is cached in the swarmclaw-data volume before the full stack starts.
+# ── Pre-build Hermes Workspace ────────────────────────────────────────────────
+# Builds the workspace image from GitHub source. Cached after first build.
 
-docker volume create ares_swarmclaw-data 2>/dev/null || true
-docker volume create ares_swarmclaw-npm 2>/dev/null || true
-
-SC_BUILT=$(docker run --rm -v ares_swarmclaw-data:/data alpine \
-    sh -c 'ls /data/builds 2>/dev/null | head -1' 2>/dev/null || true)
-
-if [[ -z "$SC_BUILT" ]]; then
-    info "Pre-building SwarmClaw Next.js app (first run, ~2 min)..."
-    docker run --rm \
-        -v ares_swarmclaw-data:/root/.swarmclaw \
-        -v ares_swarmclaw-npm:/root/.npm-global \
-        -e npm_config_prefix=/root/.npm-global \
-        -e PATH=/root/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-        -e NODE_OPTIONS=--max-old-space-size=3072 \
-        node:22 \
-        sh -c '
-            export PATH=/root/.npm-global/bin:$PATH
-            # Install if not already present
-            if ! command -v swarmclaw >/dev/null 2>&1; then
-                npm install -g @swarmclawai/swarmclaw --quiet --no-progress || exit 1
-            fi
-            # Patch missing @types/dagre — bug in @swarmclawai/swarmclaw package
-            # Without it the Next.js TypeScript build fails with "implicitly has any type"
-            SC_MOD=/root/.npm-global/lib/node_modules/@swarmclawai/swarmclaw
-            DAGRE_TYPES="$SC_MOD/node_modules/@types/dagre"
-            if [ ! -f "$DAGRE_TYPES/index.d.ts" ]; then
-                mkdir -p "$DAGRE_TYPES"
-                printf "declare module '\''dagre'\'';\n" > "$DAGRE_TYPES/index.d.ts"
-            fi
-            # Clear stale lock if any
-            rm -f /root/.swarmclaw/builds/*/\.next/lock 2>/dev/null || true
-            swarmclaw server --build
-        ' \
-        && success "SwarmClaw pre-built" \
-        || warn "SwarmClaw pre-build failed — will retry on first start"
+if docker image inspect ares-hermes-workspace:latest >/dev/null 2>&1; then
+    success "Hermes Workspace image already built (cached)"
 else
-    success "SwarmClaw already built (cached)"
+    info "Building Hermes Workspace image (first run, ~2 min)..."
+    docker compose --project-name ares build hermes-workspace \
+        && success "Hermes Workspace image built" \
+        || warn "Hermes Workspace build failed — check logs with: docker compose build hermes-workspace"
 fi
 
 # ── Start the full stack ───────────────────────────────────────────────────────
@@ -616,40 +583,20 @@ for i in $(seq 1 30); do
     echo -n "."; sleep 3
 done
 
-# ── Wait for SwarmClaw ────────────────────────────────────────────────────────
+# ── Wait for Hermes Workspace ─────────────────────────────────────────────────
 
-echo -n "  Waiting for SwarmClaw to start"
-SWARMCLAW_READY=false
-for i in $(seq 1 90); do
-    if curl -sf http://localhost:3456/api/healthz >/dev/null 2>&1; then
-        echo; SWARMCLAW_READY=true; break
+WORKSPACE_PORT="${WORKSPACE_PORT:-3000}"
+echo -n "  Waiting for Hermes Workspace to start"
+WORKSPACE_READY=false
+for i in $(seq 1 60); do
+    if curl -sf "http://localhost:${WORKSPACE_PORT}" >/dev/null 2>&1; then
+        echo; WORKSPACE_READY=true; break
     fi
-    echo -n "."; sleep 5
+    echo -n "."; sleep 3
 done
-if [[ "$SWARMCLAW_READY" == "false" ]]; then
+if [[ "$WORKSPACE_READY" == "false" ]]; then
     echo
-    warn "SwarmClaw not reachable yet (npm install on first run takes ~60s)."
-    warn "Re-run setup.sh once it's up to complete the SwarmClaw seed."
-fi
-
-# ── Seed SwarmClaw ────────────────────────────────────────────────────────────
-# Writes Hermes endpoint + Ares Pentest agent + skips setup wizard directly
-# into the SwarmClaw SQLite DB. HTTP API requires session auth, so direct DB
-# write via better-sqlite3 (already bundled with SwarmClaw) is the right path.
-
-if [[ "$SWARMCLAW_READY" == "true" ]]; then
-    info "Seeding SwarmClaw config..."
-    sleep 3  # let DB migrations complete
-    docker cp swarmclaw-seed.js ares-swarmclaw:/tmp/swarmclaw-seed.js
-    if docker exec \
-        -e HERMES_API_URL="http://hermes:8643" \
-        -e HERMES_API_KEY="$HERMES_API_KEY" \
-        ares-swarmclaw \
-        node /tmp/swarmclaw-seed.js; then
-        success "SwarmClaw seeded — Ares Pentest agent ready"
-    else
-        warn "SwarmClaw seed failed — configure manually at http://localhost:3456"
-    fi
+    warn "Hermes Workspace not reachable yet — check: docker compose logs hermes-workspace"
 fi
 
 # ── Verify ────────────────────────────────────────────────────────────────────
@@ -660,10 +607,10 @@ echo
 docker compose --project-name ares ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 echo
 
-SWARMCLAW_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:3456 2>/dev/null || echo "unreachable")
-[[ "$SWARMCLAW_HTTP" == "200" ]] \
-    && success "SwarmClaw:  http://localhost:3456" \
-    || warn    "SwarmClaw:  not yet reachable ($SWARMCLAW_HTTP) — retry in ~60s"
+WORKSPACE_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:${WORKSPACE_PORT:-3000}" 2>/dev/null || echo "unreachable")
+[[ "$WORKSPACE_HTTP" == "200" ]] \
+    && success "Workspace:  http://localhost:${WORKSPACE_PORT:-3000}" \
+    || warn    "Workspace:  not yet reachable ($WORKSPACE_HTTP)"
 
 MOBSF_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
     -H "Authorization: ${MOBSF_API_KEY}" \
@@ -676,11 +623,11 @@ echo
 echo "────────────────────────────────────────────────────────────"
 echo "  Ares is running."
 echo
-echo "  Web UI:    http://localhost:3456"
-echo "  Output:    ${PENTEST_OUTPUT}"
+echo "  Web UI:    http://localhost:${WORKSPACE_PORT:-3000}"
+echo "  Output:    docker volume inspect ares_ares-pentest-output"
 echo
 echo "  Start an engagement:"
-echo "    Open http://localhost:3456 → Ares Pentest → new chat → send:"
+echo "    Open http://localhost:${WORKSPACE_PORT:-3000} → new session → send:"
 echo '    "Full web app assessment on https://target.example.com'
 echo '    Scope: target.example.com. Auth: admin/pass. Go."'
 echo "────────────────────────────────────────────────────────────"
