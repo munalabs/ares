@@ -16,23 +16,30 @@
 
 services:
 
-  # ── Hermes Workspace — web UI for managing parallel engagements ──────────
-  # Connects to the Hermes HTTP API at http://hermes:8643 (Docker internal).
+  # ── Open WebUI — web UI for managing parallel engagements ───────────────
+  # Connects to Hermes HTTP API at http://hermes:8643/v1 (OpenAI-compatible).
   # Open at http://localhost:3000 after `docker compose up`.
-  # Builds from source on first start (~2 min); subsequent starts are instant.
-  hermes-workspace:
-    build:
-      context: https://github.com/outsourc-e/hermes-workspace.git
-      dockerfile: docker/workspace/Dockerfile
-    image: ares-hermes-workspace:latest
-    container_name: ares-workspace
+  # WEBUI_AUTH=false — no login for local deployments.
+  # Set WEBUI_AUTH=true in .env + WEBUI_SECRET_KEY to enable user accounts.
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: ares-open-webui
     restart: unless-stopped
     ports:
-      - "${WORKSPACE_PORT:-3000}:3000"
+      - "${WEBUI_PORT:-3000}:8080"
     environment:
-      HERMES_API_URL: "http://hermes:8643"
-      HERMES_API_TOKEN: "${HERMES_API_KEY:-}"
-      HERMES_PASSWORD: "${WORKSPACE_PASSWORD:-}"
+      # Point at Hermes — OpenAI-compatible endpoint
+      OPENAI_API_BASE_URLS: "http://hermes:8643/v1"
+      OPENAI_API_KEYS: "${HERMES_API_KEY:-}"
+      # Disable built-in Ollama integration (not used in this stack)
+      ENABLE_OLLAMA_API: "false"
+      # Auth — false for local use, set to true for shared deployments
+      WEBUI_AUTH: "${WEBUI_AUTH:-false}"
+      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY:-}"
+      # Branding
+      WEBUI_NAME: "Ares"
+    volumes:
+      - open-webui-data:/app/backend/data
     depends_on:
       - hermes
 
@@ -131,6 +138,7 @@ services:
 
 volumes:
   mobsf-data:
+  open-webui-data:
   # Pentest output — named volume shared between hermes and ares-tools terminal containers.
   # On Linux production the data lives inside Docker's volume store; use
   # `docker cp` or bind a host path via PENTEST_OUTPUT_DEVICE in .env if you

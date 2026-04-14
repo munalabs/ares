@@ -118,7 +118,7 @@ if [[ "$ANDROID_ONLY" == "false" ]]; then
             [[ -n "$DISCORD_FREE_RESPONSE_CHANNELS" ]] || die "DISCORD_FREE_RESPONSE_CHANNELS cannot be empty."
             success "Discord configured"
         else
-            warn "Discord skipped — Hermes Workspace web UI only (http://localhost:${WORKSPACE_PORT:-3000})"
+            warn "Discord skipped — Open WebUI only (http://localhost:${WEBUI_PORT:-3000})"
         fi
     fi
 
@@ -538,17 +538,11 @@ docker compose --project-name ares build hermes
 docker build -f Dockerfile.tools -t ares-tools:latest ..
 success "Images built"
 
-# ── Pre-build Hermes Workspace ────────────────────────────────────────────────
-# Builds the workspace image from GitHub source. Cached after first build.
-
-if docker image inspect ares-hermes-workspace:latest >/dev/null 2>&1; then
-    success "Hermes Workspace image already built (cached)"
-else
-    info "Building Hermes Workspace image (first run, ~2 min)..."
-    docker compose --project-name ares build hermes-workspace \
-        && success "Hermes Workspace image built" \
-        || warn "Hermes Workspace build failed — check logs with: docker compose build hermes-workspace"
-fi
+# ── Pull Open WebUI ───────────────────────────────────────────────────────────
+info "Pulling Open WebUI image..."
+docker pull ghcr.io/open-webui/open-webui:main \
+    && success "Open WebUI image ready" \
+    || warn "Open WebUI pull failed — will retry on first start"
 
 # ── Start the full stack ───────────────────────────────────────────────────────
 
@@ -583,20 +577,20 @@ for i in $(seq 1 30); do
     echo -n "."; sleep 3
 done
 
-# ── Wait for Hermes Workspace ─────────────────────────────────────────────────
+# ── Wait for Open WebUI ───────────────────────────────────────────────────────
 
-WORKSPACE_PORT="${WORKSPACE_PORT:-3000}"
-echo -n "  Waiting for Hermes Workspace to start"
-WORKSPACE_READY=false
-for i in $(seq 1 60); do
-    if curl -sf "http://localhost:${WORKSPACE_PORT}" >/dev/null 2>&1; then
-        echo; WORKSPACE_READY=true; break
+WEBUI_PORT="${WEBUI_PORT:-3000}"
+echo -n "  Waiting for Open WebUI to start"
+WEBUI_READY=false
+for i in $(seq 1 40); do
+    if curl -sf "http://localhost:${WEBUI_PORT}/health" >/dev/null 2>&1; then
+        echo; WEBUI_READY=true; break
     fi
     echo -n "."; sleep 3
 done
-if [[ "$WORKSPACE_READY" == "false" ]]; then
+if [[ "$WEBUI_READY" == "false" ]]; then
     echo
-    warn "Hermes Workspace not reachable yet — check: docker compose logs hermes-workspace"
+    warn "Open WebUI not reachable yet — check: docker compose logs open-webui"
 fi
 
 # ── Verify ────────────────────────────────────────────────────────────────────
@@ -607,10 +601,10 @@ echo
 docker compose --project-name ares ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 echo
 
-WORKSPACE_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:${WORKSPACE_PORT:-3000}" 2>/dev/null || echo "unreachable")
-[[ "$WORKSPACE_HTTP" == "200" ]] \
-    && success "Workspace:  http://localhost:${WORKSPACE_PORT:-3000}" \
-    || warn    "Workspace:  not yet reachable ($WORKSPACE_HTTP)"
+WEBUI_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:${WEBUI_PORT:-3000}/health" 2>/dev/null || echo "unreachable")
+[[ "$WEBUI_HTTP" == "200" ]] \
+    && success "Open WebUI: http://localhost:${WEBUI_PORT:-3000}" \
+    || warn    "Open WebUI: not yet reachable ($WEBUI_HTTP)"
 
 MOBSF_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
     -H "Authorization: ${MOBSF_API_KEY}" \
@@ -623,7 +617,7 @@ echo
 echo "────────────────────────────────────────────────────────────"
 echo "  Ares is running."
 echo
-echo "  Web UI:    http://localhost:${WORKSPACE_PORT:-3000}"
+echo "  Web UI:    http://localhost:${WEBUI_PORT:-3000}"
 echo "  Output:    docker volume inspect ares_ares-pentest-output"
 echo
 echo "  Start an engagement:"
