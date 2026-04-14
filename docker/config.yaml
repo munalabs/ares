@@ -124,7 +124,7 @@ mcp_servers:
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
       # ADB client inside the container talks to the host ADB server via bridge.
       # Host must run: adb kill-server && adb -a -P 5037 nodaemon server start
-      ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST:-host.docker.internal}"
+      ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST}"
       ANDROID_ADB_SERVER_PORT: "${ANDROID_ADB_SERVER_PORT}"
       ADB_SERIAL: "${ADB_SERIAL:-localhost:5555}"
 
@@ -135,7 +135,7 @@ mcp_servers:
     env:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
-      ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST:-host.docker.internal}"
+      ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST}"
       ANDROID_ADB_SERVER_PORT: "${ANDROID_ADB_SERVER_PORT}"
       # FRIDA_SERVER_ARCH: x86_64 — Linux Docker emulator, Intel Mac AVD
       #                   arm64  — Apple Silicon AVD (M1/M2/M3/M4), most physical phones
