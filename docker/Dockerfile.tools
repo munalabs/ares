@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
-    && (apt-get install -y --no-install-recommends nikto whatweb 2>/dev/null || true) \
+    && (apt-get install -y --no-install-recommends whatweb 2>/dev/null || true) \
     && (apt-get install -y android-sdk-platform-tools 2>/dev/null || true) \
     && (apt-get install -y adb 2>/dev/null || true) \
     && mkdir -p /usr/lib/android-sdk/platform-tools \
@@ -70,6 +70,11 @@ RUN npm install -g @playwright/mcp@latest \
 # ── testssl.sh ────────────────────────────────────────────────────────────────
 RUN git clone --depth 1 https://github.com/drwetter/testssl.sh.git /opt/testssl \
     && ln -s /opt/testssl/testssl.sh /usr/local/bin/testssl
+
+# ── nikto (not in Debian trixie — install from source) ───────────────────────
+RUN git clone --depth 1 https://github.com/sullo/nikto.git /opt/nikto \
+    && ln -sf /opt/nikto/program/nikto.pl /usr/local/bin/nikto \
+    && chmod +x /opt/nikto/program/nikto.pl
 
 # ── Wordlists ─────────────────────────────────────────────────────────────────
 RUN mkdir -p /wordlists \
