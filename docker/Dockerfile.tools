@@ -31,7 +31,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python security tools ─────────────────────────────────────────────────────
-RUN pip3 install sqlmap commix wafw00f sslyze jwt_tool --break-system-packages
+RUN pip3 install sqlmap commix wafw00f sslyze --break-system-packages
+
+# ── jwt_tool (not on PyPI — install from source) ─────────────────────────────
+RUN pip3 install termcolor cprint pycryptodomex requests --break-system-packages \
+    && git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool \
+    && chmod +x /opt/jwt_tool/jwt_tool.py \
+    && ln -sf /opt/jwt_tool/jwt_tool.py /usr/local/bin/jwt_tool
 
 # ── Go toolchain ─────────────────────────────────────────────────────────────
 # Architecture-aware: detects amd64 vs arm64 at build time.
