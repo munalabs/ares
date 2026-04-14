@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     docker.io jq xz-utils \
     && (apt-get install -y --no-install-recommends android-sdk-platform-tools 2>/dev/null \
         || apt-get install -y --no-install-recommends adb 2>/dev/null || true) \
+    && mkdir -p /usr/lib/android-sdk/platform-tools \
+    && ([ -f /usr/lib/android-sdk/platform-tools/adb ] \
+        || ln -sf "$(command -v adb)" /usr/lib/android-sdk/platform-tools/adb) \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js 22 (playwright MCP + gitnexus)
@@ -85,7 +88,7 @@ COPY skills/ /root/.hermes/profiles/pentest/skills/
 # ── Runtime ───────────────────────────────────────────────────────────────────
 ENV HERMES_HOME=/root/.hermes/profiles/pentest
 
-# Enable HTTP API server so SwarmClaw (and hermes-workspace) can connect.
+# Enable HTTP API server so Open WebUI can connect via OpenAI-compatible endpoint.
 # API runs on 8643 alongside any configured messaging platforms (Discord etc.).
 # If DISCORD_BOT_TOKEN is absent in the mounted .env, gateway skips Discord
 # but still serves the HTTP API — enabling pure web-UI deployments.

@@ -11,6 +11,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nmap curl wget git jq \
     ca-certificates libssl-dev openssl gnupg \
+    bsdmainutils \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg \
        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
@@ -23,6 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && (apt-get install -y --no-install-recommends nikto 2>/dev/null || true) \
     && (apt-get install -y android-sdk-platform-tools 2>/dev/null \
         || apt-get install -y adb 2>/dev/null || true) \
+    && mkdir -p /usr/lib/android-sdk/platform-tools \
+    && ([ -f /usr/lib/android-sdk/platform-tools/adb ] \
+        || ln -sf "$(command -v adb)" /usr/lib/android-sdk/platform-tools/adb) \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python security tools ─────────────────────────────────────────────────────
