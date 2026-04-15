@@ -137,11 +137,12 @@ if [[ "$ANDROID_ONLY" == "false" ]]; then
     #   docker run --rm -v "$PENTEST_OUTPUT":/out alpine chown -R $(id -u):$(id -g) /out
     success "Output directory: $PENTEST_OUTPUT"
 
-# ── APK upload directory ──────────────────────────────────────────────────────
-# Bind-mounted into hermes as /uploads — drop APKs here on the host.
-    UPLOADS_DIR="$HOME/ares-uploads"
-    mkdir -p "$UPLOADS_DIR"
-    success "APK upload directory: $UPLOADS_DIR"
+# ── Local workspace directory ─────────────────────────────────────────────────
+# Bind-mounted into hermes and all terminal containers as /workspace.
+# Drop APKs, clone repos, or place any files here — the agent reads them at /workspace/.
+    WORKSPACE_DIR="$HOME/ares-workspace"
+    mkdir -p "$WORKSPACE_DIR"
+    success "Workspace directory: $WORKSPACE_DIR"
 fi  # end ANDROID_ONLY==false
 
 # ── Android / ADB (optional) ──────────────────────────────────────────────────
@@ -585,7 +586,7 @@ ENVEOF
     printf 'HERMES_API_KEY=%s\n'       "$HERMES_API_KEY"
     printf 'MOBSF_API_KEY=%s\n'        "$MOBSF_API_KEY"
     printf '\nPENTEST_OUTPUT=%s\n'     "$PENTEST_OUTPUT"
-    printf 'UPLOADS_DIR=%s\n'         "$HOME/ares-uploads"
+    printf 'WORKSPACE_DIR=%s\n'        "$HOME/ares-workspace"
     if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
         printf '\nADB_SERIAL=%s\n'                  "$ADB_SERIAL_VAL"
         printf 'ANDROID_ADB_SERVER_HOST=%s\n'       "$ANDROID_ADB_SERVER_HOST_VAL"
@@ -691,7 +692,8 @@ echo "  Ares is running."
 echo
 echo "  Web UI:    http://localhost:${WEBUI_PORT:-3000}"
 echo "  Output:    docker volume inspect ares_ares-pentest-output"
-echo "  APKs:      drop files in ~/ares-uploads/  →  accessible at /uploads/ in hermes"
+echo "  Workspace: ~/ares-workspace/  →  /workspace/ inside hermes"
+echo "             (drop APKs, clone repos, place any files the agent should access)"
 echo
 echo "  Start an engagement:"
 echo "    Open http://localhost:${WEBUI_PORT:-3000} → new session → send:"

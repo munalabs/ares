@@ -95,10 +95,11 @@ services:
       # config.yaml references "ares-pentest-output:/pentest-output" so Docker resolves
       # the same named volume whether it's hermes or a spawned terminal container.
       - ares-pentest-output:/pentest-output
-      # APK uploads — drop files in ~/ares-uploads/ on the host to make them
-      # available at /uploads/ inside hermes (and the terminal containers it spawns).
-      # UPLOADS_DIR is written to .env by setup.sh as an absolute host path.
-      - "${UPLOADS_DIR:-$HOME/ares-uploads}:/uploads"
+      # Local workspace — bind-mount for host↔agent file sharing.
+      # Drop APKs, clone repos, or place any files in ~/ares-workspace/ on the host.
+      # Accessible at /workspace/ inside hermes and all spawned terminal containers.
+      # WORKSPACE_DIR is written to .env by setup.sh as an absolute host path.
+      - "${WORKSPACE_DIR:-$HOME/ares-workspace}:/workspace"
     depends_on:
       mobsf:
         condition: service_healthy

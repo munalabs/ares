@@ -54,7 +54,7 @@ terminal:
     - MOBSF_API_KEY
     - MOBSF_URL
     - FRIDA_SERVER_ARCH
-    - UPLOADS_DIR
+    - WORKSPACE_DIR
   docker_env:
     ZAP_API_KEY: "${ZAP_API_KEY}"
     MOBSF_URL: "http://172.17.0.1:8100"
@@ -70,7 +70,7 @@ terminal:
     - "ares-pentest-output:/pentest-output"
     - "ares-pentest-output:/home/user/pentest-output"
     - "/var/run/docker.sock:/var/run/docker.sock"
-    - "${UPLOADS_DIR}:/uploads"
+    - "${WORKSPACE_DIR}:/workspace"
   container_cpu: 4
   container_memory: 16384
   container_persistent: true
