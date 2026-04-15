@@ -52,7 +52,7 @@ cd -
 
 # ─── iris (Mobile MCP — MoBSF + ADB + Frida) ──────────────────────────────
 echo "=== Installing iris mobile MCP servers ==="
-git clone https://github.com/munalabs/iris.git "$TOOLS_DIR/iris" 2>/dev/null || \
+git clone https://github.com/your-org/iris.git "$TOOLS_DIR/iris" 2>/dev/null || \
   (cd "$TOOLS_DIR/iris" && git pull)
 cd "$TOOLS_DIR/iris"
 chmod +x install.sh && ./install.sh

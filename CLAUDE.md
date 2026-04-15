@@ -463,7 +463,7 @@ pip3 install fastmcp httpx frida frida-tools --break-system-packages 2>/dev/null
   pip3 install fastmcp httpx frida frida-tools --user
 
 if [ ! -d ~/tools/iris ]; then
-  git clone https://github.com/munalabs/iris.git ~/tools/iris
+  git clone https://github.com/your-org/iris.git ~/tools/iris
 fi
 
 # Verify syntax
@@ -533,7 +533,7 @@ mkdir -p "$PROFILE_DIR/skills/pentest-orchestrate"
 if [ -d ~/tools/ares ]; then
   git -C ~/tools/ares pull --quiet
 else
-  git clone https://github.com/munalabs/ares.git ~/tools/ares
+  git clone https://github.com/your-org/ares.git ~/tools/ares
 fi
 
 # Install profile files

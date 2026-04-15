@@ -105,7 +105,7 @@ mcp_servers:
       - gitnexus@latest
       - mcp
   mobsf:
-    # iris MCP server — https://github.com/munalabs/iris
+    # iris MCP server
     command: /usr/bin/python3
     args:
       - /home/YOURUSER/tools/iris/mobsf.py
@@ -114,7 +114,7 @@ mcp_servers:
       MOBSF_API_KEY: "${MOBSF_API_KEY}"
       PENTEST_OUTPUT: /pentest-output
   adb:
-    # iris MCP server — https://github.com/munalabs/iris
+    # iris MCP server
     command: /usr/bin/python3
     args:
       - /home/YOURUSER/tools/iris/adb.py
@@ -122,7 +122,7 @@ mcp_servers:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
   frida:
-    # iris MCP server — https://github.com/munalabs/iris
+    # iris MCP server
     command: /usr/bin/python3
     args:
       - /home/YOURUSER/tools/iris/frida.py

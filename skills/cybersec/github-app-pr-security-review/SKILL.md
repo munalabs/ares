@@ -3,7 +3,7 @@ name: github-app-pr-security-review
 description: >
   Deploy and operate Argos v2 — a PR security review service backed by PostgreSQL,
   JWT auth, and Fernet-encrypted secrets. Metrics-only storage (no code/findings at rest).
-  Hermes polls for work via service JWT. Source: github.com/munalabs/argos
+  Hermes polls for work via service JWT. Source: github.com/your-org/argos
 version: 4.0.0
 metadata:
   hermes:
@@ -19,7 +19,7 @@ metadata:
 - Building security-review-as-a-service for clients
 - Need multi-tenant PR security with per-repo isolation
 
-Source: https://github.com/munalabs/argos
+Source: https://github.com/your-org/argos
 
 ## Architecture
 
@@ -52,7 +52,7 @@ Three tiers of secret handling:
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/munalabs/argos.git && cd argos
+git clone https://github.com/your-org/argos.git && cd argos
 cp .env.example .env
 
 # Generate JWT secret
@@ -84,7 +84,7 @@ curl -s -X POST http://localhost:8080/api/repos \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "full_name": "munalabs/argos",
+    "full_name": "your-org/argos",
     "webhook_secret": "your-hmac-secret",
     "discord_webhook_url": "https://discord.com/api/webhooks/...",
     "severity_threshold": "low",

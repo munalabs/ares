@@ -145,7 +145,7 @@ The report and tarball are delivered as Discord attachments (if Discord is enabl
 ## Quick Start
 
 ```bash
-git clone https://github.com/munalabs/ares.git
+git clone https://github.com/your-org/ares.git
 cd ares/docker
 ./setup.sh
 ```
@@ -267,7 +267,7 @@ For production deployments — full Hindsight memory, physical device testing, n
 Open Claude Code and run:
 
 ```
-Deploy the Ares pentest stack following CLAUDE.md at https://github.com/munalabs/ares
+Deploy the Ares pentest stack following CLAUDE.md at https://github.com/your-org/ares
 Target machine: USER@HOST (password: PASSWORD)
 ```
 
