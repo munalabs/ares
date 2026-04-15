@@ -1,8 +1,8 @@
 # Ares — Autonomous Pentest Agent
 
-Ares is a penetration testing profile for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It turns a bare server or local workstation into a fully autonomous pentest platform — operated via Discord, a web UI ([SwarmClaw](https://swarmclaw.ai)), or both simultaneously.
+Ares is a penetration testing profile for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It turns a bare server or local workstation into a fully autonomous pentest platform — operated via a web UI, Discord, or both simultaneously.
 
-You send a target URL and credentials. The agent runs a full OWASP WSTG assessment, validates every finding with a working proof of concept, and delivers a Markdown/HTML/PDF report with PoC scripts. No manual steps during the engagement.
+You send a target URL and credentials. The agent runs a full OWASP WSTG assessment, validates every finding with a working proof of concept, and delivers a Markdown/HTML report with PoC scripts. No manual steps during the engagement.
 
 ---
 
@@ -14,34 +14,36 @@ You send a target URL and credentials. The agent runs a full OWASP WSTG assessme
 - **Attack chains** — correlates individual findings into exploitable end-to-end scenarios with CVSS 4.0 scoring
 - **Detection engineering** — Sigma rules and MITRE ATT&CK Navigator layers for every validated finding
 - **Mobile testing** — static analysis (MoBSF), dynamic instrumentation (Frida SSL unpinning, crypto hooks), device control (ADB)
+- **White-box support** — clone target repos into `~/ares-workspace/`; the agent reads source at `/workspace/` inside all containers
 - **Memory across engagements** — Hindsight extracts findings and patterns after each session, building institutional knowledge over time
-- **Dual interface** — Discord (one forum thread per engagement) or SwarmClaw web UI (local, no bot required); both can run simultaneously
 
 ---
 
 ## Architecture
 
 ```
-Discord Forum Thread          SwarmClaw Web UI
-(one thread = one engagement) (http://localhost:3456)
-        │                             │
-        └─────────────┬───────────────┘
-                      ▼
-Hermes Gateway — pentest profile (HTTP API :8643 + optional Discord)
-        │
-        ├── Claude Sonnet 4.6 (orchestrator — phases 0–2, tool execution, report assembly)
-        │       │
-        │       └── Claude Opus 4.6 delegate_task (reasoning_effort: xhigh)
-        │               └── phases 3–5 analysis, attack chain building, CVSS scoring
-        │
-        ├── Haiku 4.5 (auto-routed for trivial turns — JSON parsing, format ops)
-        │
-        ├── MCP: playwright      — headless Chromium, DOM testing, authenticated crawl
-        ├── MCP: pentest-ai      — 27 tools: ZAP, sqlmap, nuclei, ffuf, nmap, dalfox...
-        ├── MCP: gitnexus        — GitHub source analysis, secrets, exposed config
-        ├── MCP: mobsf           — mobile static analysis (APK/IPA)
-        ├── MCP: adb             — Android device control, APK extraction
-        └── MCP: frida           — dynamic instrumentation, SSL unpinning, crypto hooks
+Open WebUI (http://localhost:3000)     Discord Forum Thread
+(multi-engagement, model selector)     (one thread = one engagement)
+              │                                    │
+              └────────────────┬───────────────────┘
+                               ▼
+         Hermes Gateway — pentest profile
+         HTTP API :8643 (OpenAI-compatible) + optional Discord
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+     Claude Sonnet 4.6    Haiku 4.5       Claude Opus 4.6
+     (orchestrator)     (trivial turns,  (deep analysis —
+                         auto-routed)    delegate_task)
+                               │
+              ┌────────────────┼────────────────────────┐
+              ▼                ▼                ▼        ▼
+     MCP: playwright   MCP: pentest-ai   MCP: gitnexus  ...
+     (headless Chrome) (27 scan/exploit  (GitHub source
+                        tools)            analysis)
+
+     MCP: mobsf        MCP: adb          MCP: frida
+     (static analysis) (device control)  (dynamic instrumentation)
 ```
 
 **Model routing** is tiered by cost and reasoning requirement:
@@ -58,23 +60,18 @@ This routing cuts cost ~43% vs full Opus without quality loss on tool execution 
 
 ## Stack
 
-| Component | Purpose | Where it runs |
-|-----------|---------|---------------|
-| [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.8.0+ | Orchestrator, HTTP API, Discord gateway, skill engine | Host / Docker |
-| [SwarmClaw](https://swarmclaw.ai) | Web UI — multi-engagement dashboard, parallel session management | Docker container |
-| [pentest-ai](https://github.com/0xSteph/pentest-ai) | MCP server — 27 scan/exploit tools | Host (spawned by Hermes) |
-| [OWASP ZAP](https://www.zaproxy.org/) | Web scanner, spider, passive scanner | Docker container (per engagement) |
-| [MoBSF](https://github.com/MobSF/Mobile-Security-Framework-MobSF) | Mobile static analysis (APK/IPA/APPX) | Docker container |
-| [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Headless Chromium — DOM testing, auth crawl | Host (spawned by Hermes) |
-| [Iris](https://github.com/munalabs/iris) | MCP servers for MoBSF, ADB, Frida | Host (spawned by Hermes) |
-| [Claude Code](https://claude.ai/code) | Anthropic OAuth token source | Host |
-| [Hindsight](https://github.com/NousResearch/hindsight) | Persistent memory — cross-session learning | Host (systemd user service) |
-| sqlmap, nuclei, ffuf, dalfox | Injection/scan CLI tools | Host (called by pentest-ai) |
-| nmap, nikto, subfinder, httpx | Recon CLI tools | Host (called by pentest-ai) |
-| testssl.sh | TLS/SSL analysis | Host |
-| Discord bot (optional) | Alternative operator interface | Connects to Discord gateway |
+| Component | Purpose | Port |
+|-----------|---------|------|
+| [Open WebUI](https://github.com/open-webui/open-webui) | Web UI — multi-engagement chat, model selector | 3000 |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.9.0+ | Orchestrator, HTTP API, Discord gateway, skill engine | 9119 (dashboard), 8643 (API) |
+| [MoBSF](https://github.com/MobSF/Mobile-Security-Framework-MobSF) | Mobile static analysis (APK/IPA/APPX) | 8100 |
+| [OWASP ZAP](https://www.zaproxy.org/) | Web scanner, spider, passive scanner | dynamic (per engagement) |
+| [pentest-ai](https://github.com/0xSteph/pentest-ai) | MCP server — 27 scan/exploit tools | stdio |
+| [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Headless Chromium — DOM testing, auth crawl | stdio |
+| MCP: mobsf / adb / frida | Mobile testing MCP servers (vendored in `mcp/`) | stdio |
+| `ares-tools` image | Terminal container — all security tools pre-installed | spawned per session |
 
-**Minimum hardware:** 4 cores, 8GB RAM, 50GB disk, Ubuntu 22.04+
+**Minimum hardware:** 4 cores, 8GB RAM, 50GB disk, macOS (Docker Desktop) or Linux
 
 **Recommended:** 8+ cores, 16GB+ RAM, 200GB SSD (for ZAP + MoBSF + concurrent sessions)
 
@@ -82,7 +79,7 @@ This routing cuts cost ~43% vs full Opus without quality loss on tool execution 
 
 ## Skills
 
-`skills/pentest-orchestrate/` is the master orchestrator. It runs all 13 phases and delegates specialized testing to sub-skills:
+`skills/pentest-orchestrate/` is the master orchestrator. It runs all 13 phases and delegates to sub-skills:
 
 | Sub-skill | Coverage |
 |-----------|----------|
@@ -98,24 +95,22 @@ This routing cuts cost ~43% vs full Opus without quality loss on tool execution 
 | `pentest-attack-navigator` | MITRE ATT&CK Navigator JSON layer export |
 | `pentest-attack-flow` | Attack flow diagram generation |
 | `pentest-d3fend-advisor` | Defensive roadmap per finding |
-| `pentest-report-writer` | Consolidated Markdown + HTML + PDF report |
+| `pentest-report-merge-and-regenerate` | Consolidated Markdown + HTML report assembly |
 
 ---
 
 ## Testing Phases
 
-The orchestrator runs these phases sequentially per engagement:
-
 | Phase | Coverage |
 |-------|----------|
-| 0 | Scope lock, per-engagement output dir, ZAP context setup |
-| 1 | Recon — nmap, nuclei, subfinder, ZAP spider, AJAX spider, authenticated Playwright crawl, ffuf content discovery |
+| 0 | Scope lock, per-engagement ZAP container spawn, output dir setup |
+| 1 | Recon — nmap, nuclei, subfinder, ZAP spider + AJAX spider, authenticated Playwright crawl, ffuf content discovery |
 | 2 | Passive analysis — ZAP alerts, security headers, JS source analysis, cookie flags, client-side storage |
 | 3 | Auth & authz — IDOR across all ID parameters, broken function-level auth, mass assignment, JWT attacks, CSRF |
-| 4 | Injection — SQLi (sqlmap), XSS (dalfox), DOM XSS (Playwright), SSRF, SSTI, command injection, XXE (file upload + XML endpoints), file upload abuse |
+| 4 | Injection — SQLi (sqlmap), XSS (dalfox), DOM XSS (Playwright), SSRF, SSTI, command injection, XXE, file upload abuse |
 | 5 | Business logic — race conditions, rate limiting, workflow bypass, WebSocket auth, CORS |
 | 6 | Validation + chain building — Opus confirms every finding, builds attack chains, scores CVSS 4.0 |
-| 7 | Report — executive summary, per-finding detail with PoC + evidence, Sigma rules, ATT&CK layer, PDF delivery |
+| 7 | Report — executive summary, per-finding detail with PoC + evidence, Sigma rules, ATT&CK layer, delivery |
 | 8 | Error handling — stack traces, framework debug pages |
 | 9 | Cryptography — TLS config (testssl.sh), weak hashing, padding oracle |
 | 10 | Client-side — DOM XSS sinks, postMessage, XSSI, clickjacking |
@@ -127,13 +122,12 @@ The orchestrator runs these phases sequentially per engagement:
 
 ## Output
 
-Every engagement writes to an isolated directory:
+Every engagement writes to an isolated directory inside the named Docker volume:
 
 ```
 /pentest-output/
   {target-slug}_{YYYYMMDD_HHMMSS}/
     final-report.html           — full technical report, browser-ready
-    final-report.pdf            — same report as PDF
     evidence/
       F-01_sqli_response.txt    — raw request/response for each finding
       phase-2-summary.md        — phase summaries (compaction resilience)
@@ -141,42 +135,14 @@ Every engagement writes to an isolated directory:
       F-05_xss.png              — browser evidence for client-side findings
     pocs/
       F-01_sqli.sh              — standalone PoC script per finding
-  {target-slug}_{timestamp}-FINAL.tar.gz    — full bundle for archival
+  {target-slug}_{timestamp}-FINAL.tar.gz
 ```
 
-The tarball and HTML report are attached directly to the Discord thread.
-
----
-
-## Memory
-
-Hindsight runs as a persistent daemon, extracting findings and attack patterns after each engagement into a vector store. This means:
-
-- Recurring vulnerabilities across multiple targets are surfaced ("this same JWT misconfiguration appeared in 3 engagements")
-- Effective payloads are remembered across sessions
-- The agent gets better at prioritizing high-value test vectors over time
-
-Hindsight uses Groq free tier (llama-3.3-70b-versatile) for memory extraction — no additional cost beyond the free quota.
+The report and tarball are delivered as Discord attachments (if Discord is enabled) or accessible via the Open WebUI session.
 
 ---
 
 ## Quick Start
-
-Three deployment paths depending on your use case:
-
-| Deployment | Interface | Who it's for |
-|------------|-----------|--------------|
-| **Option A** — Docker Compose | SwarmClaw web UI | Teams, local pentester workstations |
-| **Option B** — Docker Compose + Discord | Discord forum threads | Personal / on-call security team |
-| **Option C** — Bare-metal via Claude Code | Discord + SwarmClaw | Production, Hindsight memory, physical device testing |
-
----
-
-### Option A: Docker Compose — Local / Team (No Discord)
-
-The default Docker Compose deployment. No Discord bot needed. SwarmClaw runs at `http://localhost:3456` as the multi-engagement web UI. Each conversation in SwarmClaw is an isolated engagement session.
-
-**Prerequisites:** Docker Engine, Docker Compose v2, Anthropic OAuth token (`claude login`). No root required — your user needs to be in the `docker` group (`sudo usermod -aG docker $USER`).
 
 ```bash
 git clone https://github.com/munalabs/ares.git
@@ -184,18 +150,20 @@ cd ares/docker
 ./setup.sh
 ```
 
-The script runs as your normal user. It prompts for your Anthropic token (and optionally Discord), auto-generates ZAP and MoBSF API keys, builds images, starts the stack, seeds SwarmClaw with the Ares Pentest agent, and verifies everything. First run takes ~5 minutes (npm install on first SwarmClaw start).
+`setup.sh` prompts for your Anthropic token, optionally Discord, builds images, starts the stack, and verifies everything. First run takes ~5 minutes.
 
-Open **http://localhost:3456** → start a new conversation → send your engagement brief.
+Open **http://localhost:3000** → select a model → start a new chat → send your engagement brief.
+
+**Prerequisites:** Docker Engine + Docker Compose v2, your user in the `docker` group. No root required.
 
 ---
 
-### Option B: Docker Compose + Discord
+### Adding Discord
 
-Run `setup.sh` and answer **y** to the Discord prompt, or add credentials to `.env` after the fact:
+Answer **y** to the Discord prompt during `setup.sh`, or add to `.env` after setup:
 
 ```bash
-# Add to .env (uncomment and fill in):
+# .env
 DISCORD_BOT_TOKEN=your-bot-token
 DISCORD_ALLOWED_USERS=your-discord-user-id
 DISCORD_FREE_RESPONSE_CHANNELS=your-forum-channel-id
@@ -203,73 +171,13 @@ DISCORD_FREE_RESPONSE_CHANNELS=your-forum-channel-id
 docker compose --project-name ares restart hermes
 ```
 
-With Android emulator (requires `/dev/kvm`, bare metal only):
-```bash
-docker compose --project-name ares --profile android up -d
-```
-
----
-
-**Services started (both options):**
-
-| Container | Purpose | Port |
-|-----------|---------|------|
-| `ares-swarmclaw` | SwarmClaw web UI — multi-engagement dashboard | 3456 |
-| `ares-hermes` | Hermes + all MCP servers + HTTP API | 8643 (internal) |
-| `ares-mobsf` | MoBSF static analysis (shared — hash-isolated) | 8100 |
-| `zap-{engagement-id}` | OWASP ZAP — spawned per engagement, torn down after delivery | dynamic 18000–19000 |
-| `ares-android` | Android emulator (optional, `--profile android`, Linux+KVM only) | 5555, 6080 |
-
-The `ares-tools` image is the terminal that Hermes spawns for each session — it has all security tools (nmap, sqlmap, nuclei, ffuf, dalfox, subfinder, Playwright, testssl.sh, wordlists) pre-installed.
-
----
-
-### Mobile Testing (Android)
-
-ADB runs inside the `ares-hermes` container. USB and network devices are reached via a bridge to the ADB server on the host — no USB passthrough into Docker required.
-
-**Before starting the stack**, make the host ADB server listen on all interfaces:
-```bash
-adb kill-server && adb -a -P 5037 nodaemon server start
-```
-
-Three device scenarios:
-
-| Scenario | Setup | `ADB_SERIAL` in `.env` |
-|----------|-------|------------------------|
-| **Docker emulator** (Linux + `/dev/kvm`) | `docker compose --profile android up -d` | `localhost:5555` |
-| **Android Studio AVD** (macOS / Windows) | Start AVD in Android Studio normally | `localhost:5554` (or check `adb devices`) |
-| **USB phone** (connected to host) | Authorize once on the phone | serial from `adb devices` (e.g. `R58N12345`) |
-| **Wi-Fi / Tailscale phone** | Enable wireless ADB on phone | `<device-ip>:5555` |
-
-On Linux servers, `host.docker.internal` resolves via the `extra_hosts` mapping in `compose.yml`. If it doesn't, set `ANDROID_ADB_SERVER_HOST=172.17.0.1` in `.env` (the docker0 bridge IP).
-
-The Docker emulator (`ares-android`) requires `/dev/kvm` — bare metal only. VMs need nested virtualization enabled. ADB (`localhost:5555`) and the VNC screen viewer (`http://localhost:6080`) are bound to `127.0.0.1` only.
-
----
-
-### Option C: Bare-Metal via Claude Code
-
-For production use, full Hindsight memory support, and physical device testing.
-
-**Prerequisites:** Ubuntu Server 22.04+, Claude Code on your workstation.
-
-Open Claude Code and paste:
-
-```
-Deploy the Ares pentest stack following CLAUDE.md at https://github.com/munalabs/ares
-Target machine: USER@HOST (password: PASSWORD)
-```
-
-Claude Code reads `CLAUDE.md` and executes the full install remotely via SSH — tools, containers, Hermes profile, Discord gateway, SwarmClaw — stopping only at human action points (OAuth login, API keys, Discord bot setup).
+Each thread in your pentest forum channel becomes an isolated engagement session.
 
 ---
 
 ### Run an Engagement
 
-**Via SwarmClaw (web UI):** Open `http://localhost:3456` → new conversation → paste your engagement brief.
-
-**Via Discord:** Create a thread in your pentest forum channel and send:
+**Via Open WebUI:** Open `http://localhost:3000` → new chat → paste your brief:
 
 ```
 Full web app assessment on https://staging.target.com
@@ -280,70 +188,175 @@ Destructive: yes
 Go.
 ```
 
-The agent runs all phases autonomously and delivers findings + report as file attachments (Discord) or downloadable files from the SwarmClaw session.
+**Via Discord:** Create a thread in your pentest forum channel and send the same brief.
+
+---
+
+### White-box / Local File Access
+
+Hermes and all terminal containers it spawns have `/workspace` bind-mounted from `~/ares-workspace/` on the host. Use it for anything the agent needs direct access to:
+
+```bash
+# White-box pentest — clone repo locally
+cd ~/ares-workspace && git clone https://github.com/your-org/target-app
+
+# → tell Hermes: "review /workspace/target-app/ for auth issues"
+```
+
+```bash
+# Mobile testing — drop APK locally
+cp MyApp.apk ~/ares-workspace/
+
+# → tell Hermes: "analyze /workspace/MyApp.apk with MoBSF"
+```
+
+Files placed in `~/ares-workspace/` are immediately visible at `/workspace/` without restarting the stack.
+
+---
+
+### Mobile Testing (Android)
+
+The ADB MCP server runs inside the `ares-hermes` container and connects to the ADB server running on your host machine — no USB passthrough into Docker required.
+
+**macOS (Android Studio AVD):**
+
+```bash
+# Install socat (one-time)
+brew install socat
+
+# Run once per session (or add to ~/.zshrc for persistence):
+nohup socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037 \
+    >/tmp/ares-socat.log 2>&1 &
+
+# Connect your emulator over TCP so Hermes can reach it:
+adb -s emulator-5554 tcpip 5555 && adb connect 127.0.0.1:5555
+```
+
+Then run the automated setup:
+```bash
+cd ares/docker && ./setup.sh --android
+```
+
+`setup.sh --android` detects your Docker Desktop VM bridge IP (typically `192.168.64.1`), starts the socat proxy, connects the emulator, and writes `ANDROID_ADB_SERVER_HOST`, `ANDROID_ADB_SERVER_PORT`, and `ADB_SERIAL` to `.env`. Run it any time you need to reconfigure Android without rebuilding the stack.
+
+**Linux (Docker emulator, requires `/dev/kvm`):**
+
+```bash
+docker compose --project-name ares --profile android up -d
+```
+
+The `ares-android` container (`budtmo/docker-android`) runs Android 13 with ADB on port 5555 and a VNC screen viewer at `http://localhost:6080`.
+
+**Device scenarios:**
+
+| Scenario | `ADB_SERIAL` in `.env` |
+|----------|------------------------|
+| macOS Android Studio AVD | `127.0.0.1:5555` (after socat + tcpip setup above) |
+| Linux Docker emulator | `localhost:5555` |
+| USB phone (host) | serial from `adb devices` (e.g. `R58N12345`) |
+| Wi-Fi / Tailscale phone | `<device-ip>:5555` |
+
+> **Note:** `host.docker.internal` on macOS Docker Desktop resolves to `172.17.0.1` (the Docker VM bridge), not the Mac. `setup.sh --android` handles this automatically.
+
+---
+
+### Bare-Metal via Claude Code
+
+For production deployments — full Hindsight memory, physical device testing, no Docker Desktop overhead.
+
+Open Claude Code and run:
+
+```
+Deploy the Ares pentest stack following CLAUDE.md at https://github.com/munalabs/ares
+Target machine: USER@HOST (password: PASSWORD)
+```
+
+Claude Code reads `CLAUDE.md` and executes the full install remotely via SSH — tools, containers, Hermes profile, Discord gateway — stopping only at human action points (OAuth login, API keys, Discord bot setup).
+
+---
+
+## Security Tools (ares-tools image)
+
+All tools are pre-installed in the terminal container that Hermes spawns per session:
+
+| Category | Tools |
+|----------|-------|
+| Web scanning | nmap, nuclei, nikto, whatweb, wafw00f |
+| Fuzzing | ffuf, sqlmap |
+| XSS / injection | dalfox, commix |
+| TLS/SSL | sslyze, testssl.sh |
+| Recon | subfinder, httpx |
+| HTTP utils | curl, httpx |
+| Secrets | gitleaks, jwt_tool |
+| Mobile | adb, frida (via MCP) |
+| Wordlists | SecLists common.txt, raft-medium-dirs.txt, api-endpoints.txt |
 
 ---
 
 ## Key Design Decisions
 
-**Why SwarmClaw for team use?**
-Discord is great for personal use — one bot, one channel, mobile notifications. For a pentest team, Discord bots don't scale: one bot token = one WebSocket connection, per-engagement threading is manual, and report delivery is awkward as file attachments. SwarmClaw gives each pentester a proper multi-session dashboard, persistent session archives, and downloadable reports — no bot infrastructure needed.
+**Why Open WebUI?**
+Open WebUI gives a clean multi-conversation UI without requiring a Discord bot. It connects to Hermes's OpenAI-compatible API endpoint (`/v1`), supports multiple simultaneous sessions, and has a model selector for switching between Hermes profiles. No forks, no custom frontend code.
 
 **Why Hermes?**
-Hermes is a multi-model orchestrator with persistent sessions, skill routing, HTTP API server, and MCP server management. Running a 100+ turn pentest session requires all of these — a single Claude conversation context would exhaust.
+Hermes is a multi-model orchestrator with persistent sessions, skill routing, HTTP API server, and MCP server management. A 100+ turn pentest session exhausts a single Claude conversation context — Hermes handles compression, model routing, and resumption automatically.
 
 **Why not ZAP MCP?**
-ZAP MCP addon v0.0.1 alpha hardcodes `127.0.0.1` as its bind address and enforces HTTPS. Both `-config` flags to override these are ignored at runtime. Ares uses ZAP via its REST API at `http://{container-ip}:8080/JSON/` instead.
+ZAP MCP addon v0.0.1 alpha hardcodes `127.0.0.1` as its bind address and enforces HTTPS. Both `-config` flags to override these are ignored at runtime. Ares uses ZAP via its REST API directly instead.
 
-**Why per-engagement output dirs?**
-Parallel engagements writing to `/pentest-output/` root overwrite each other's reports and evidence. Each engagement gets `/pentest-output/{target}_{timestamp}/` at Phase 0 before any tools run.
+**Why per-engagement ZAP containers?**
+A shared ZAP instance accumulates state across engagements — old scan trees, stale alerts, mixed session data. Per-engagement containers give each run a clean ZAP state, then are torn down after report delivery.
 
 **Why delegate CVSS to Opus?**
 In controlled testing, Sonnet consistently downgraded severity by one tier on auth bypass, mass assignment, and JWT storage findings compared to Opus. CVSS scoring is delegated to Opus with explicit calibration guidance to prevent systematic under-rating.
 
-**Why not API key for Anthropic?**
-Nico's credits live on his claude.ai account as extra usage credits, accessible via OAuth token (Claude Code login), not a standard API key. Hermes auto-refreshes OAuth tokens from `~/.claude/.credentials.json` — a hardcoded API key would go stale and cause retry storms.
+**Why socat on macOS instead of `adb -a`?**
+On macOS, Android Studio's ADB daemon respawns immediately and re-locks itself to `127.0.0.1`. The `-a` (listen on all interfaces) flag is silently ignored. socat bridges the Docker Desktop VM network to the Mac's localhost ADB, which works regardless of which process owns the ADB server.
 
 ---
 
 ## Configuration Reference
 
-`config.yaml` — main profile config. Key settings:
+`docker/config.yaml` — baked into `ares-hermes` at build time. Key settings:
 
 ```yaml
 model:
-  default: claude-sonnet-4-6   # orchestrator model — fast and cheap
+  default: claude-sonnet-4-6
   provider: anthropic
 
 smart_model_routing:
   enabled: true
   cheap_model:
-    model: claude-haiku-4-5-20251001  # trivial turns auto-routed here
+    model: claude-haiku-4-5-20251001
 
 compression:
-  threshold: 0.50      # compress when context reaches 50% of window
-  protect_last_n: 30   # keep last 30 turns verbatim — never compress active findings
+  threshold: 0.50       # compress when context reaches 50% of window
+  protect_last_n: 30    # keep last 30 turns verbatim
 
 terminal:
-  backend: docker                # all tool execution in isolated container
-  container_persistent: true     # same container reused across turns (faster)
+  backend: docker
+  docker_image: ares-tools:latest
+  container_persistent: true
   docker_volumes:
-    - "/home/nico/pentest-output:/pentest-output"  # output survives container restarts
+    - "ares-pentest-output:/pentest-output"
+    - "${WORKSPACE_DIR}:/workspace"
+    - "/var/run/docker.sock:/var/run/docker.sock"
 ```
 
-The `SKILL.md` for `pentest-orchestrate` is the engagement brain — it contains the full methodology, tool invocation patterns, model routing rules, and output format.
+> **Important:** `${VAR:-default}` bash fallback syntax in `config.yaml` is passed as a literal string by Hermes — it does not expand. Use plain `${VAR}` and set defaults in `.env.example`.
 
 ---
 
 ## Limitations
 
-- **Authorization required.** This tool is for authorized security testing only. The profile will not proceed without explicit scope confirmation.
-- **No WAF bypass.** Ares uses standard tool flags. Evasion against enterprise WAFs (Cloudflare, Akamai) requires manual tuning.
-- **MoBSF mobile testing** requires a physical Android device or KVM-enabled host for the emulator (`/dev/kvm`).
+- **Authorization required.** The profile will not proceed without explicit scope confirmation.
+- **No WAF bypass.** Ares uses standard tool flags. Evasion against enterprise WAFs requires manual tuning.
+- **Android emulator** (`--profile android`) requires `/dev/kvm` — bare metal only.
 - **GitNexus** is [PolyForm Noncommercial](https://polyformproject.org/licenses/noncommercial/1.0.0/) — personal/internal use only.
+- **Open WebUI** cannot directly accept binary file uploads (APKs, binaries) — use `~/ares-workspace/` for files Hermes needs to access.
 
 ---
 
 ## License
 
-MIT. Component licenses: pentest-ai (MIT), GitNexus (PolyForm Noncommercial), Hermes Agent (Apache 2.0), ZAP (Apache 2.0), MoBSF (GPL-3.0), Frida (wxWindows Library License).
+MIT. Component licenses: pentest-ai (MIT), GitNexus (PolyForm Noncommercial), Hermes Agent (Apache 2.0), ZAP (Apache 2.0), MoBSF (GPL-3.0), Frida (wxWindows Library License), Open WebUI (MIT).
