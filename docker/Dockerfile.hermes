@@ -66,6 +66,24 @@ RUN pip3 install fastmcp httpx frida frida-tools --break-system-packages \
        done \
     && chmod +x /opt/mcp/frida-server/frida-server-android-*
 
+# ── apktool + jadx (required by apk-sast MCP server) ─────────────────────────
+# apktool needs JRE. jadx is optional but improves Smali→Java decompilation.
+# Versions pinned — bump here when updating.
+ARG APKTOOL_VERSION=2.9.3
+ARG JADX_VERSION=1.5.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    default-jre-headless unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -q "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar" \
+       -O /usr/local/lib/apktool.jar \
+    && printf '#!/bin/sh\nexec java -jar /usr/local/lib/apktool.jar "$@"\n' \
+       > /usr/local/bin/apktool && chmod +x /usr/local/bin/apktool \
+    && wget -q "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip" \
+       -O /tmp/jadx.zip \
+    && unzip -q /tmp/jadx.zip -d /opt/jadx \
+    && ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx \
+    && rm /tmp/jadx.zip
+
 # ── Playwright MCP + gitnexus ─────────────────────────────────────────────────
 # Pre-install both so they don't run npm-install on every gateway startup.
 RUN npm install -g @playwright/mcp@latest gitnexus \
