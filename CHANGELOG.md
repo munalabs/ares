@@ -1,5 +1,92 @@
 # Changelog
 
+## [Unreleased] — 2026-04-23
+
+### Added
+
+#### apk-sast MCP Server (`mcp/apk_sast.py`)
+
+New MCP server implementing Option C static analysis: deterministic extraction tools, LLM skill does the reasoning. No verdicts in code — only structured evidence.
+
+**7 tools:**
+- `decompile_apk` — run apktool + jadx, return decompile_dir and paths
+- `parse_manifest` — structured AndroidManifest.xml JSON (components, permissions, SDK versions)
+- `build_call_graph` — Smali `invoke-*` → `{callees, callers}` per in-scope class (scope-filtered, capped)
+- `grep_smali` — regex over in-scope Smali files with context lines (app package only, library blocklist applied)
+- `run_rule_context` — aggregate all evidence for one rule: manifest findings + code matches + call graph context
+- `list_rules` — all rules with MASVS v2.0 refs and suggested severity
+- `get_masvs` — MASVS v2.0 control lookup by ID
+
+**11 SAST rules** (gaps from DLH comparative analysis):
+- `strandhogg` — taskAffinity/launchMode attack, StrandHogg 1.0 + 2.0 (targetSdk < 29)
+- `pending_intent_mutable` — PendingIntent without FLAG_IMMUTABLE
+- `biometric_without_crypto` — BiometricPrompt/FingerprintManager without CryptoObject binding
+- `zip_slip` — ZipEntry.getName() without path sanitization
+- `fragment_injection` — exported PreferenceActivity without isValidFragment()
+- `unsafe_reflection` — Class.forName / Method.invoke with external input
+- `insecure_deserialization` — ObjectInputStream.readObject() on untrusted data
+- `jetpack_compose_saveable_leak` — sensitive data in rememberSaveable()
+- `exported_no_permission` — exported component without android:permission
+- `tapjacking` — activity without filterTouchesWhenObscured
+- `intent_scheme_webview` — intent:// scheme in WebView without shouldOverrideUrlLoading() validation
+
+**Architecture:** library blocklist (20+ prefixes) + package whitelist for scope filtering. Call graph built from Smali `invoke-*` instructions, used for call_graph_relevant rules to trace whether attacker-controlled input reaches a dangerous sink. All outputs capped to prevent context pollution.
+
+**MASVS v2.0 embedded:** 18 controls (STORAGE, CRYPTO, AUTH, NETWORK, PLATFORM, CODE, RESILIENCE, PRIVACY) with title and URL. Returned inline in `run_rule_context` output and available standalone via `get_masvs`.
+
+**Tested on InsecureBankv2:**
+- `exported_no_permission` → 7 components correctly identified (LoginActivity, PostLogin, DoTransfer, ViewStatement, ChangePassword, MyBroadCastReceiver, TrackUserContentProvider)
+- `strandhogg` → 0 findings (correct — InsecureBankv2 has no taskAffinity issues)
+- `grep_smali` → correctly scoped to `com.android.insecurebankv2`, SharedPreferences found, no library noise
+
+#### Security Standards Reference (`skills/shared/security-standards.md`)
+
+Unified reference for standard control tagging across all skills.
+
+- **`standard_ref` format** — JSON field and Markdown line format for all findings
+- **MASVS v2.0 table** — 21 controls with finding category examples
+- **OWASP WSTG table** — 36 test IDs mapped to finding categories (SQLi→WSTG-INPV-05, IDOR→WSTG-ATHZ-04, etc.)
+- **OWASP CI/CD Top 10 table** — CICD-SEC-01 through CICD-SEC-10 with typical findings
+
+Skills updated to use `standard_ref`:
+- `pentest-orchestrate` — `**Standard:** [WSTG-XX-YY](url)` in finding template + WSTG quick-map table
+- `pentest-ci-cd-pipeline` — `**Standard:** [CICD-SEC-XX](url)` in finding template + CICD-SEC quick-map
+- `pentest-mobile-static-fallback` — Extended Rule Coverage section with apk-sast orchestration and MASVS-tagged finding format
+
+#### Architecture Documentation (`docs/ARES-OVERVIEW.md`)
+
+New standalone reference document with Mermaid diagrams:
+- System architecture (components, interfaces, models, MCP server stack)
+- Deployment modes comparison (Docker Compose vs bare-metal)
+- Web pentest flow (Phases 0–7 with verification loop)
+- Mobile testing flow (static dual-track + device-gated dynamic)
+- Finder-Verifier loop sequence diagram with finding states
+- Model routing decision tree (Sonnet/Opus/Haiku)
+- Engagement isolation diagram
+- Standards coverage map
+- Report deliverables
+- Key operational constraints table
+
+#### Docker: apktool + jadx in ares-hermes (`docker/Dockerfile.hermes`)
+
+apk-sast MCP runs inside the hermes container. Added:
+- `default-jre-headless` — JRE required by apktool
+- `apktool 2.9.3` — APK decompiler (pinned via ARG, wrapped as `java -jar` shell script)
+- `jadx 1.5.0` — optional Java source decompiler (pinned via ARG)
+- `unzip` — required for jadx zip extraction
+
+### Fixed
+
+#### `decompile_apk`: removed `--no-res`, added XML validation (`mcp/apk_sast.py`)
+
+`--no-res` caused apktool to leave the AndroidManifest.xml in binary AXML format on certain APKs (reproduced on InsecureBankv2). The binary manifest is not parseable by ElementTree, causing `_detect_package()` to silently return an empty string and all manifest-based rules to produce no findings.
+
+Fix: removed `--no-res` from the decompile invocation. apktool decodes the manifest regardless of this flag — `--no-res` only skips decoding `res/` directory resources. The performance difference is negligible for pentest use.
+
+Additionally, the idempotency check now validates the manifest with `ET.parse()` instead of checking existence only. A previous partial run that left a binary manifest now triggers re-decompilation automatically instead of silently returning bad results.
+
+---
+
 ## [Unreleased] — 2026-04-21
 
 ### Added

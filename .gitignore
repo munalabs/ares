@@ -7,3 +7,5 @@ docker/.env.bak
 .DS_Store
 *.html
 *.bak
+__pycache__/
+*.pyc

@@ -17,7 +17,7 @@ Example correct final message (use REAL filenames, not placeholders):
 - This is the pentest profile. All testing requires explicit written authorization.
 
 ## MCP Tools
-- MCP servers: playwright, pentest-ai (29 tools), gitnexus (20 tools), mobsf (18 tools), adb (30 tools), frida (18 tools) — 140 tools total
+- MCP servers: playwright, pentest-ai (29 tools), gitnexus (20 tools), mobsf (18 tools), adb (30 tools), frida (18 tools), apk-sast (7 tools) — 147 tools total
 - **CRITICAL: Playwright MCP runs on the HOST machine, NOT inside the Docker terminal container.**
   The terminal container does NOT have Chromium or its dependencies installed.
   NEVER try to install, launch, or use Playwright/Chromium inside the terminal.
@@ -90,6 +90,16 @@ Use EXACTLY these argument names when calling pentest-ai tools:
 - scan_secrets_builtin(target)
 - builtin_scan(target, scan_type)
 - close_engagement(engagement_id)
+
+## apk-sast MCP — Android Static Analysis
+- **apk-sast runs in ares-hermes, NOT the terminal container.** apktool and jadx are installed in the hermes image.
+- APK must be at a path reachable inside ares-hermes — `/pentest-output/` is always correct. `/workspace/` also works.
+- **Primary workflow:** `decompile_apk(apk_path)` first, then `run_rule_context(decompile_dir, rule)` per rule.
+- `run_rule_context` returns raw evidence only — you reason about it and decide `is_vulnerable`, `severity`, `confidence`.
+- Available rules: `strandhogg`, `pending_intent_mutable`, `biometric_without_crypto`, `zip_slip`, `fragment_injection`, `unsafe_reflection`, `insecure_deserialization`, `jetpack_compose_saveable_leak`, `exported_no_permission`, `tapjacking`, `intent_scheme_webview`
+- MASVS v2.0 reference embedded — `get_masvs(id)` returns title + URL for any MASVS control.
+- **Pitfall: PENTEST_OUTPUT path.** On macOS Docker Desktop the env var may expand to the host path (e.g. `/Users/nico/ares-pentest-output`). This works because Docker Desktop mounts `/Users` into containers. On Linux Docker it would NOT work — always pass `/pentest-output/` explicitly as `apk_path` or `output_dir`.
+- **Pitfall: binary manifest.** If a previous decompile left a corrupted manifest, re-running `decompile_apk` now detects this via XML parse validation and re-decompiles automatically.
 
 ## Mobile App Testing (MobSF)
 - **CRITICAL: MobSF runs on the HOST, NOT inside the terminal container. NEVER pip install or start MobSF locally.**
