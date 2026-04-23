@@ -147,3 +147,10 @@ mcp_servers:
       FRIDA_DEVICE: "${ADB_SERIAL}"
       FRIDA_TCP_HOST: "${FRIDA_TCP_HOST}"
       FRIDA_TCP_PORT: "${FRIDA_TCP_PORT}"
+
+  apk-sast:
+    command: /usr/bin/python3
+    args:
+      - /opt/mcp/apk_sast.py
+    env:
+      PENTEST_OUTPUT: /pentest-output

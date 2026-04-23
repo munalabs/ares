@@ -130,3 +130,11 @@ mcp_servers:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
       FRIDA_SERVER_PATH: /home/YOURUSER/tools/iris/frida-server/frida-server-android-x86_64
+  apk-sast:
+    # iris MCP server — APK static analysis with call graph and MASVS-tagged rules
+    # System dep: apt-get install -y apktool  (jadx optional, for Java source)
+    command: /usr/bin/python3
+    args:
+      - /home/YOURUSER/tools/iris/apk_sast.py
+    env:
+      PENTEST_OUTPUT: /pentest-output
