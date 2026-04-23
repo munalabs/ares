@@ -165,14 +165,9 @@ VERIFY: `ssh USER@HOST 'hermes version'` shows v0.8.0+
 
 ## PHASE 4b: Hermes Base Configuration
 
-**HUMAN ACTION #3:** Provide your API keys:
-1. **Google AI Studio** — https://aistudio.google.com/apikey (used for compression + delegation, much cheaper than Opus)
-2. **Groq** — https://console.groq.com/keys (free tier, used for memory extraction)
+All models use the Anthropic API. No additional API keys required beyond the OAuth token obtained in Phase 3.
 
 ```bash
-GOOGLE_API_KEY="KEY_HERE"
-GROQ_API_KEY="KEY_HERE"
-
 # Extract OAuth token from Claude Code credentials
 ANTHROPIC_TOKEN=$(ssh USER@HOST "python3 -c \"
 import json, pathlib, sys
@@ -189,8 +184,6 @@ ssh USER@HOST "
 mkdir -p ~/.hermes
 cat > ~/.hermes/.env << EOF
 ANTHROPIC_API_KEY=$ANTHROPIC_TOKEN
-GOOGLE_API_KEY=$GOOGLE_API_KEY
-GROQ_API_KEY=$GROQ_API_KEY
 EOF
 chmod 600 ~/.hermes/.env
 
@@ -205,16 +198,20 @@ smart_model_routing:
   max_simple_chars: 160
   max_simple_words: 28
   cheap_model:
-    provider: google
-    model: gemini-2.5-flash
+    provider: anthropic
+    model: claude-haiku-4-5-20251001   # trivial turns — swap to any provider/model
 
 compression:
   enabled: true
   threshold: 0.50
   target_ratio: 0.20
   protect_last_n: 20
-  summary_model: gemini-2.5-flash
-  summary_provider: google
+  summary_model: claude-haiku-4-5-20251001   # context compression — swap to any provider/model
+  summary_provider: anthropic
+
+fallback_model:
+  provider: anthropic
+  model: claude-sonnet-4-6
 
 terminal:
   backend: docker
@@ -750,7 +747,7 @@ Cleanup: `ssh USER@HOST 'docker stop juice-shop'`
 |---|-------|--------|
 | 1 | 1 | Run `newgrp docker` if Docker was just installed |
 | 2 | 3 | Run `claude login` → complete browser OAuth |
-| 3 | 4b | Provide Google AI Studio + Groq API keys |
+| 3 | 4b | Configure Hermes with Anthropic-only model settings |
 | 4 | 15 | Provide Discord bot token, user ID, forum channel ID |
 | 5 | 16 | Confirm pentest bot responds in Discord |
 | 6 | 18 | Run Juice Shop smoke test (optional) |

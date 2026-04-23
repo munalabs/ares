@@ -22,7 +22,7 @@ graph TD
     subgraph Core["Hermes Runtime"]
         Gateway[Gateway Service]
         Agent[Agent Loop\nmax 200 turns]
-        Compress[Context Compression\nGemini 2.5 Flash]
+        Compress[Context Compression\nHaiku 4.5]
     end
 
     subgraph Models["Claude API"]
