@@ -98,8 +98,12 @@ Use EXACTLY these argument names when calling pentest-ai tools:
 - `run_rule_context` returns raw evidence only — you reason about it and decide `is_vulnerable`, `severity`, `confidence`.
 - Available rules: `strandhogg`, `pending_intent_mutable`, `biometric_without_crypto`, `zip_slip`, `fragment_injection`, `unsafe_reflection`, `insecure_deserialization`, `jetpack_compose_saveable_leak`, `exported_no_permission`, `tapjacking`, `intent_scheme_webview`
 - MASVS v2.0 reference embedded — `get_masvs(id)` returns title + URL for any MASVS control.
+- **inject_frida_gadget(decompile_dir, arch, gadget_config_mode)** — patches APK for dynamic analysis without root. Call AFTER `decompile_apk`. Returns `{signed_apk, install_cmd, connect_cmd}`. arch: `arm64-v8a` (physical) | `x86_64` (emulators). Idempotent — safe to call multiple times.
+- **sign_apk(apk_path)** — signs any APK with the debug keystore (V1+V2+V3). Use after manual modifications.
 - **Pitfall: PENTEST_OUTPUT path.** On macOS Docker Desktop the env var may expand to the host path (e.g. `/Users/nico/ares-pentest-output`). This works because Docker Desktop mounts `/Users` into containers. On Linux Docker it would NOT work — always pass `/pentest-output/` explicitly as `apk_path` or `output_dir`.
 - **Pitfall: binary manifest.** If a previous decompile left a corrupted manifest, re-running `decompile_apk` now detects this via XML parse validation and re-decompiles automatically.
+- **Pitfall: decompile is cached.** `decompile_apk` skips apktool if the manifest is already valid XML. This means modifications to the decompile dir (e.g. from `inject_frida_gadget`) persist across calls. To force a fresh decompile, delete the sast directory: `rm -rf /pentest-output/sast_{APK_STEM}/`.
+- **Frida Gadget connect flow** (after install): `adb forward tcp:27042 tcp:27042 && frida -H 127.0.0.1:27042 -n Gadget`. App pauses on startup (`on_load: wait`) — attach before the OS kills it (within ~30s).
 
 ## Mobile App Testing (MobSF)
 - **CRITICAL: MobSF runs on the HOST, NOT inside the terminal container. NEVER pip install or start MobSF locally.**

@@ -111,7 +111,7 @@ graph LR
         MobSF -->|static APK analysis\nREST API| MobSFSvc[MoBSF service]
         ADB -->|device control\n30 tools| Device[Android Device\nor Emulator]
         Frida -->|dynamic instrumentation\n18 tools| Device
-        APKSAST["apk-sast\n7 tools\n11 rules"] -->|apktool · call graph| APK[APK file]
+        APKSAST["apk-sast\n9 tools · 11 rules\ninject_frida_gadget\nsign_apk"] -->|apktool · call graph\nfrida gadget injection| APK[APK file]
     end
 
     style APKSAST fill:#4a9,color:#fff
@@ -439,7 +439,12 @@ Each PoC script is self-contained, matches the exact request/response from the v
 | Playwright | `browser_evaluate`, not `browser_execute_script` | execute_script crashes MCP process |
 | delegate_task | returns text, never writes files | container isolation — write from main agent |
 | Tool output cap | varies (40–100 lines) | context pollution prevention |
-| Frida | must run as root on device | `su 0` before frida-server start |
+| Frida (root path) | must run as root on device | `su 0` before frida-server start |
+| Frida Gadget (non-root path) | `decompile_apk` → `inject_frida_gadget` → `adb install` | re-signs APK with debug keystore; breaks signature-pinned apps |
+| max_turns | 200 (configurable in `config.yaml`) | raise to 400+ for large apps or combined web+mobile |
+| Context evidence | persist to `$OUTDIR/evidence/` before Phase 3 | `protect_last_n: 30` won't cover Phase 1 recon after 50+ turns |
+| Dry-run PoC guard | `exit 0 # DRY RUN GUARD` in destructive scripts | remove only with written client authorization |
 | Opus stream timeout | `HERMES_STREAM_STALE_TIMEOUT=900` | xhigh reasoning silent for 3–5 min |
+| Model provider | all Anthropic — Sonnet/Opus/Haiku | swap in `config.yaml` compression/cheap_model/fallback_model |
 
 Full pitfall list: [`skills/pentest-orchestrate/references/pitfalls.md`](../skills/pentest-orchestrate/references/pitfalls.md)

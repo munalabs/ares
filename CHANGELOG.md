@@ -38,6 +38,7 @@ New MCP server implementing Option C static analysis: deterministic extraction t
 - `exported_no_permission` → 7 components correctly identified (LoginActivity, PostLogin, DoTransfer, ViewStatement, ChangePassword, MyBroadCastReceiver, TrackUserContentProvider)
 - `strandhogg` → 0 findings (correct — InsecureBankv2 has no taskAffinity issues)
 - `grep_smali` → correctly scoped to `com.android.insecurebankv2`, SharedPreferences found, no library noise
+- `inject_frida_gadget(arch=x86_64)` → produces valid signed APK: `lib/x86_64/libfrida-gadget.so` + `libfrida-gadget.config.so`, V1+V2+V3 signatures, gadget config `{"type": "listen", "port": 27042, "on_load": "wait"}`, 13.5 MB
 
 #### Security Standards Reference (`skills/shared/security-standards.md`)
 
@@ -84,6 +85,18 @@ apk-sast MCP runs inside the hermes container. Added:
 Fix: removed `--no-res` from the decompile invocation. apktool decodes the manifest regardless of this flag — `--no-res` only skips decoding `res/` directory resources. The performance difference is negligible for pentest use.
 
 Additionally, the idempotency check now validates the manifest with `ET.parse()` instead of checking existence only. A previous partial run that left a binary manifest now triggers re-decompilation automatically instead of silently returning bad results.
+
+#### `_inject_load_library`: protected/public/final access modifier support
+
+Initial implementation only matched `.method public onCreate`. `LoginActivity` in InsecureBankv2 uses `.method protected onCreate` — the pattern was updated to match `public`, `protected`, `private`, and combinations with `final`.
+
+#### `_inject_load_library`: idempotency guard
+
+Added early-return check: if `"frida-gadget"` (or any target lib name) is already in the smali content, skip injection and return `True`. Prevents double-injection if `inject_frida_gadget` is called multiple times on the same decompile directory.
+
+#### `_do_sign_apk`: signing flags updated
+
+`--apks` → `-a` (short form, avoids ambiguity). Added `--allowResign` (handles APKs already signed with a different key) and `--skipZipAlign` (built-in zipalign binary fails under arm64 emulation on Apple Silicon Docker Desktop hosts).
 
 ---
 

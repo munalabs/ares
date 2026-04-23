@@ -828,11 +828,14 @@ def _activity_to_smali(activity_name: str, base: Path) -> "Path | None":
 def _inject_load_library(smali_path: Path, lib_name: str) -> bool:
     """
     Inject System.loadLibrary(lib_name) at the top of onCreate.
+    Idempotent: no-op if already injected.
     Handles public, protected, and public final access modifiers.
     Increments .locals by 1 and uses the new register to avoid conflicts.
-    Returns True if injection succeeded.
+    Returns True if injection succeeded (or was already present).
     """
     content = smali_path.read_text(errors="ignore")
+    if f'"{lib_name}"' in content:
+        return True  # already injected
 
     # Find onCreate — supports public, protected, public final, etc.
     oncreate_re = re.compile(
