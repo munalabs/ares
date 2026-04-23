@@ -407,16 +407,21 @@ def decompile_apk(apk_path: str, output_dir: str = "") -> str:
     out.mkdir(parents=True, exist_ok=True)
     apktool_dir = out / "apktool"
 
-    if not (apktool_dir / "AndroidManifest.xml").exists():
+    # Re-run apktool if manifest is missing or not valid XML (catches partial/failed runs).
+    manifest_ok = False
+    manifest_path = apktool_dir / "AndroidManifest.xml"
+    if manifest_path.exists():
+        try:
+            ET.parse(manifest_path)
+            manifest_ok = True
+        except ET.ParseError:
+            pass  # binary or corrupt — re-decompile
+
+    if not manifest_ok:
         r = subprocess.run(
-            ["apktool", "d", str(apk), "-o", str(apktool_dir), "-f", "--no-res"],
-            capture_output=True, text=True, timeout=120,
+            ["apktool", "d", str(apk), "-o", str(apktool_dir), "-f"],
+            capture_output=True, text=True, timeout=180,
         )
-        if r.returncode != 0:
-            r = subprocess.run(
-                ["apktool", "d", str(apk), "-o", str(apktool_dir), "-f"],
-                capture_output=True, text=True, timeout=180,
-            )
         if r.returncode != 0:
             return json.dumps({"error": f"apktool failed: {r.stderr[-600:]}"})
 
