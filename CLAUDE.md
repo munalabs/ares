@@ -786,3 +786,135 @@ Default 180s is too short — xhigh reasoning is silent for 3-5 minutes before f
 **delegate_task files lost:**
 Delegates run in isolated containers without `/pentest-output` mounted.
 Never use `delegate_task` to write deliverables — have it return text, write files yourself.
+
+---
+
+## PHASE 20: Android Mobile Testing (macOS Docker Desktop)
+
+This phase is for macOS only. Linux uses Docker emulator (`--profile android`) and direct ADB.
+
+### Prerequisites (one-time)
+
+```bash
+brew install android-platform-tools socat
+# Install Android Studio from https://developer.android.com/studio
+# Open Android Studio → More Actions → SDK Manager:
+#   SDK Platforms: Android 14 (API 34) ✓
+#   SDK Tools: Android Emulator ✓, Android SDK Command-line Tools ✓
+```
+
+### First-time emulator setup
+
+```bash
+cd docker && bash setup.sh --android
+# Answer: y → y (configure Android, set up emulator)
+# The script installs system-images;android-34;google_apis;arm64-v8a,
+# creates the ares-android AVD, starts the emulator, starts socat bridges,
+# and updates .env + recreates hermes with the correct env vars.
+```
+
+### Starting mobile testing (every session)
+
+```bash
+cd docker && bash mobile-start.sh          # emulator
+cd docker && bash mobile-start.sh --usb   # USB phone
+cd docker && bash mobile-start.sh --stop  # stop bridges
+```
+
+`mobile-start.sh` does everything needed:
+1. Starts the emulator (if not running)
+2. Starts ADB socat bridge on port 5038
+3. Pushes frida-server from hermes image to device (first run only)
+4. Starts frida-server on device
+5. Starts Frida socat bridge on port 27042
+6. Verifies ADB and Frida connectivity from inside hermes
+
+**Keep this terminal open** — socat bridges die when it closes. Use tmux/screen for persistence.
+
+### How Docker containers reach the device
+
+```
+Emulator / USB phone
+    ↕ frida-server :27042
+    ↕ adb
+
+macOS host:
+    ADB server (127.0.0.1:5037)
+    socat :5038 → 127.0.0.1:5037   ← ADB bridge
+    socat :27042 → 127.0.0.1:27042  ← Frida bridge (via ADB forward)
+
+Docker containers (hermes, ares-tools):
+    ANDROID_ADB_SERVER_HOST=192.168.64.1 (Docker→host bridge IP)
+    ANDROID_ADB_SERVER_PORT=5038
+    ADB_SERIAL=emulator-5554 (native serial, NOT 127.0.0.1:5555)
+    FRIDA_TCP_HOST=192.168.64.1
+    FRIDA_TCP_PORT=27042
+```
+
+**Key insight:** From inside Docker containers, `192.168.64.1` (not `host.docker.internal`) reaches the macOS host on Apple Silicon. `host.docker.internal` resolves to `172.17.0.1` but socat is NOT listening there.
+
+**Key insight:** `ADB_SERIAL=emulator-5554` is correct for Docker containers. The host ADB server tracks the emulator as `emulator-5554`. Do NOT use `127.0.0.1:5555` — that serial only exists on the host's own ADB client.
+
+**Key insight:** Frida uses TCP (not ADB) from Docker. `frida_mcp.py` has a `FRIDA_TCP_HOST` override that connects via `frida.get_device_manager().add_remote_device()` instead of ADB device enumeration. Required because Frida can't enumerate devices via a remote ADB server.
+
+### Troubleshooting
+
+**Frida MCP reports device not found:**
+```bash
+# Check bridges are running
+pgrep -fl socat | grep -E "5038|27042"
+# Check frida-server is running on device
+adb -s emulator-5554 shell "ps -A | grep frida-server"
+# Restart everything
+cd docker && bash mobile-start.sh
+```
+
+**Frida MCP circuit breaker tripped (calls return immediately with error):**
+The circuit breaker trips after 3 consecutive Frida MCP failures (e.g. from using wrong serial).
+It resets when the MCP server process restarts. Force-recreate hermes and re-run mobile-start.sh:
+```bash
+docker compose --project-name ares up -d --force-recreate hermes
+bash docker/mobile-start.sh
+```
+
+**`adb devices` shows offline after mobile-start.sh:**
+Don't run `adb tcpip 5555` on an emulator — it restarts adbd and kills frida-server.
+mobile-start.sh deliberately skips this step.
+
+**frida-server not starting on physical device:**
+Physical devices need USB debugging authorized and may need `adb root` or Magisk root.
+Without root, frida can only instrument debuggable apps (userdebug builds).
+
+**Frida MCP fails even though frida-server is visible in `ps -A`:**
+Default `frida-server` binds to `127.0.0.1:27042` (loopback). The socat bridge
+can't reach it. `mobile-start.sh` detects and fixes this automatically, but if you
+start frida-server manually: always use `-l 0.0.0.0`.
+```bash
+adb -s SERIAL shell "nohup /data/local/tmp/frida-server -l 0.0.0.0 >/dev/null 2>&1 &"
+# Verify: adb shell ss -tlnp | grep 27042  → must show 0.0.0.0:27042
+```
+
+**Old APK (minSdk < 24) won't install on modern Android:**
+```bash
+# Android 14+ (emulator default):
+adb install --bypass-low-target-sdk-block app.apk
+
+# Android 12/13 physical device:
+adb install -t -f app.apk
+```
+
+**socat bridges stop after terminal closes:**
+Add to `~/.zshrc` for persistence:
+```bash
+# Ares mobile bridges — starts on login if emulator is running
+if pgrep -q "qemu\|emulator" 2>/dev/null; then
+  pgrep -q "socat.*5038"  || nohup socat TCP-LISTEN:5038,reuseaddr,fork  TCP:127.0.0.1:5037  >/tmp/ares-socat-adb.log   2>&1 &
+  pgrep -q "socat.*27042" || nohup socat TCP-LISTEN:27042,reuseaddr,fork TCP:127.0.0.1:27042 >/tmp/ares-socat-frida.log 2>&1 &
+fi
+```
+
+**Image rebuild needed** (after changing frida_mcp.py or Dockerfile.hermes):
+```bash
+docker compose --project-name ares build hermes
+docker compose --project-name ares up -d hermes
+```

@@ -2,3 +2,8 @@
 docker/.env
 docker/.env.bak
 *.tar.gz
+
+# OS / local artifacts
+.DS_Store
+*.html
+*.bak

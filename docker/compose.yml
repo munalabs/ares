@@ -66,7 +66,7 @@ services:
     env_file: .env
     environment:
       HERMES_HOME: /root/.hermes/profiles/pentest
-      # Bind to all interfaces so SwarmClaw (on the compose network) can reach this container.
+      # Bind to all interfaces so Open WebUI (on the compose network) can reach this container.
       # Requires API_SERVER_KEY — hermes refuses 0.0.0.0 without auth.
       API_SERVER_HOST: "0.0.0.0"
       API_SERVER_KEY: "${HERMES_API_KEY:-}"
@@ -91,15 +91,17 @@ services:
       # the alternative is running Hermes directly on the host, which is worse.
       # Mitigate with a socket proxy (e.g. tecnativa/docker-socket-proxy) if needed.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Named volume — shared with ares-tools terminal containers by name.
-      # config.yaml references "ares-pentest-output:/pentest-output" so Docker resolves
-      # the same named volume whether it's hermes or a spawned terminal container.
-      - ares-pentest-output:/pentest-output
+      # Bind-mount pentest output — host-accessible directory for reports, APKs, artifacts.
+      # Drop APKs here (~/ares-pentest-output/) and the agent reads them at /pentest-output/.
+      # Reports written by the agent appear here immediately — no docker cp needed.
+      # PENTEST_OUTPUT is the absolute host path, written to .env by setup.sh.
+      - "${PENTEST_OUTPUT:-$HOME/ares-pentest-output}:/pentest-output"
       # Local workspace — bind-mount for host↔agent file sharing.
       # Drop APKs, clone repos, or place any files in ~/ares-workspace/ on the host.
       # Accessible at /workspace/ inside hermes and all spawned terminal containers.
       # WORKSPACE_DIR is written to .env by setup.sh as an absolute host path.
       - "${WORKSPACE_DIR:-$HOME/ares-workspace}:/workspace"
+      - hermes-memories:/root/.hermes/memories
     depends_on:
       mobsf:
         condition: service_healthy
@@ -122,7 +124,8 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
-
+    environment:
+      - MOBSF_API_KEY=b7081e93762b85fabee3ef9de58857f91d06b9b7b81bfae838f242d1f6d97258
   # ── Android emulator (optional) ───────────────────────────────────────────
   # Requires /dev/kvm — bare metal only, not VMs without nested virtualization.
   # View screen at http://localhost:6080
@@ -144,8 +147,4 @@ services:
 volumes:
   mobsf-data:
   open-webui-data:
-  # Pentest output — named volume shared between hermes and ares-tools terminal containers.
-  # On Linux production the data lives inside Docker's volume store; use
-  # `docker cp` or bind a host path via PENTEST_OUTPUT_DEVICE in .env if you
-  # need direct host access (e.g. for report delivery).
-  ares-pentest-output:
+  hermes-memories:

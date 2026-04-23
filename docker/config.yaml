@@ -54,6 +54,8 @@ terminal:
     - MOBSF_API_KEY
     - MOBSF_URL
     - FRIDA_SERVER_ARCH
+    - FRIDA_TCP_HOST
+    - FRIDA_TCP_PORT
     - WORKSPACE_DIR
   docker_env:
     ZAP_API_KEY: "${ZAP_API_KEY}"
@@ -61,18 +63,16 @@ terminal:
     MOBSF_API_KEY: "${MOBSF_API_KEY}"
     # ZAP_URL is NOT set here — it's written to /tmp/engagement.env per engagement
     # (each engagement gets its own ZAP on a dynamic port)
-  # docker_volumes uses static paths so the gateway doesn't fall back to defaults.
-  # - ares-pentest-output is a named Docker volume shared with the hermes container.
-  #   Named volumes are resolved by the Docker daemon regardless of which container
-  #   mounts them — no host path expansion needed.
-  # - /var/run/docker.sock is the Docker daemon socket (host path, always absolute).
+  # docker_volumes — Hermes expands ${VAR} from its own environment before calling Docker.
+  # PENTEST_OUTPUT and WORKSPACE_DIR come from .env (absolute host paths) via env_file.
+  # /var/run/docker.sock is the Docker daemon socket (host path, always absolute).
   docker_volumes:
-    - "ares-pentest-output:/pentest-output"
-    - "ares-pentest-output:/home/user/pentest-output"
+    - "${PENTEST_OUTPUT}:/pentest-output"
+    - "${PENTEST_OUTPUT}:/home/user/pentest-output"
     - "/var/run/docker.sock:/var/run/docker.sock"
     - "${WORKSPACE_DIR}:/workspace"
-  container_cpu: 4
-  container_memory: 16384
+  container_cpu: 1
+  container_memory: 3072
   container_persistent: true
 
 security:
@@ -84,6 +84,11 @@ background:
   notify_on_complete: true
 
 mcp_servers:
+  burp:
+    url: "http://${ANDROID_ADB_SERVER_HOST}:9877/"
+    headers:
+      Host: "127.0.0.1:9876"
+
   playwright:
     command: npx
     args:
@@ -102,10 +107,8 @@ mcp_servers:
       PYTHONPATH: /opt/pentest-ai
 
   gitnexus:
-    command: npx
+    command: gitnexus
     args:
-      - -y
-      - gitnexus@latest
       - mcp
 
   mobsf:
@@ -133,13 +136,14 @@ mcp_servers:
   frida:
     command: /usr/bin/python3
     args:
-      - /opt/mcp/frida.py
+      - /opt/mcp/frida_mcp.py
     env:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb
       ANDROID_ADB_SERVER_HOST: "${ANDROID_ADB_SERVER_HOST}"
       ANDROID_ADB_SERVER_PORT: "${ANDROID_ADB_SERVER_PORT}"
-      # FRIDA_SERVER_ARCH: x86_64 — Linux Docker emulator, Intel Mac AVD
-      #                   arm64  — Apple Silicon AVD (M1/M2/M3/M4), most physical phones
+      ADB_SERIAL: "${ADB_SERIAL}"
       FRIDA_SERVER_PATH: "/opt/mcp/frida-server/frida-server-android-${FRIDA_SERVER_ARCH}"
       FRIDA_DEVICE: "${ADB_SERIAL}"
+      FRIDA_TCP_HOST: "${FRIDA_TCP_HOST}"
+      FRIDA_TCP_PORT: "${FRIDA_TCP_PORT}"

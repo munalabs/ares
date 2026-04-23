@@ -2,9 +2,18 @@
 # Ares — Hermes Pentest Profile
 # Install script: sets up all dependencies for the pentest profile.
 # Run as the user who will run Hermes (not root).
+# Linux (Ubuntu/Debian) only. On macOS, use: cd docker && ./setup.sh
 
 set -euo pipefail
 
+if [[ "$(uname)" != "Linux" ]]; then
+  echo "ERROR: install.sh is for Ubuntu/Debian Linux only."
+  echo "On macOS, use the Docker Compose setup instead:"
+  echo "  cd docker && ./setup.sh"
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="${ARES_TOOLS_DIR:-$HOME/tools}"
 USER=$(whoami)
 
@@ -52,11 +61,10 @@ cd -
 
 # ─── iris (Mobile MCP — MoBSF + ADB + Frida) ──────────────────────────────
 echo "=== Installing iris mobile MCP servers ==="
-git clone https://github.com/your-org/iris.git "$TOOLS_DIR/iris" 2>/dev/null || \
-  (cd "$TOOLS_DIR/iris" && git pull)
-cd "$TOOLS_DIR/iris"
-chmod +x install.sh && ./install.sh
-cd -
+mkdir -p "$TOOLS_DIR/iris"
+cp "$SCRIPT_DIR/mcp/"*.py "$TOOLS_DIR/iris/"
+pip3 install -r "$SCRIPT_DIR/mcp/requirements.txt" --break-system-packages 2>/dev/null || \
+  pip3 install -r "$SCRIPT_DIR/mcp/requirements.txt"
 
 # ─── testssl.sh ────────────────────────────────────────────────────────────
 echo "=== Installing testssl.sh ==="

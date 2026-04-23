@@ -17,7 +17,7 @@ Example correct final message (use REAL filenames, not placeholders):
 - This is the pentest profile. All testing requires explicit written authorization.
 
 ## MCP Tools
-- MCP servers: playwright (headless Chromium), pentest-ai (27 tools), gitnexus (15 tools)
+- MCP servers: playwright, pentest-ai (29 tools), gitnexus (20 tools), mobsf (18 tools), adb (30 tools), frida (18 tools) — 140 tools total
 - **CRITICAL: Playwright MCP runs on the HOST machine, NOT inside the Docker terminal container.**
   The terminal container does NOT have Chromium or its dependencies installed.
   NEVER try to install, launch, or use Playwright/Chromium inside the terminal.
@@ -31,11 +31,17 @@ Example correct final message (use REAL filenames, not placeholders):
   - NEVER hardcode ZAP address — always use $ZAP_URL from engagement.env
 
 ## CLI Tools
-- sqlmap, nuclei, ffuf, dalfox, subfinder, nmap, nikto, commix
-- testssl.sh at ~/tools/testssl.sh/testssl.sh
-- pentest-ai CLI at ~/tools/pentest-ai/
-- Wordlists at ~/wordlists/: common.txt, raft-medium-directories.txt, raft-medium-files.txt, sqli-generic.txt, xss-portswigger.txt
-- Nuclei templates at ~/.nuclei-templates/
+**CRITICAL: ALL CLI tools live inside the ares-tools terminal container, NOT in the agent's own process.**
+**ALWAYS use `terminal()` to run them. Never run `which nmap` or any tool check directly — it will show "not found" because the agent process has none of these tools.**
+
+Available tools (confirmed in `/usr/local/bin/` and `/usr/bin/` inside the terminal):
+- **Scanning:** nmap, nuclei, nikto, whatweb, sslyze
+- **Fuzzing:** ffuf, gobuster, sqlmap, commix
+- **Injection:** dalfox
+- **Recon:** subfinder, httpx, gitleaks, amass
+- **Auth/TLS:** jwt_tool, testssl (at `/usr/local/bin/testssl`)
+- **Wordlists:** `/wordlists/common.txt`, `/wordlists/raft-medium-dirs.txt`, `/wordlists/api-endpoints.txt`
+- **Nuclei templates:** `~/.nuclei-templates/` (pre-downloaded at image build time)
 
 ## Data Persistence
 - Findings persist in pentest-ai SQLite DB across sessions
@@ -45,6 +51,21 @@ Example correct final message (use REAL filenames, not placeholders):
 - Follow OWASP WSTG methodology as defined in SOUL.md
 - Validate every finding with execution-based PoC
 - Never report unconfirmed findings
+
+## pentest-ai — External Tools DO NOT WORK in Docker deployment
+pentest-ai's `run_tool()` checks tool availability using `shutil.which()` inside its own process,
+which runs in the hermes container. The hermes container has NO external security tools.
+Tools like nmap, nuclei, sqlmap, ffuf, dalfox, nikto, httpx are in the ares-tools terminal container only.
+
+**NEVER call `mcp_pentest_ai_run_tool` for nmap, nuclei, sqlmap, ffuf, dalfox, nikto, httpx, subfinder, or any CLI tool.**
+They will always return "tool not installed" — not because they're missing, but because pentest-ai
+checks the wrong container.
+
+**Use pentest-ai ONLY for:**
+- Built-in scanners: `scan_ports_builtin`, `scan_headers_builtin`, `scan_ssl_builtin`, `scan_paths_builtin`, `scan_dns_builtin`, `scan_secrets_builtin`
+- Engagement management: `start_engagement`, `get_findings`, `get_attack_chains`, `generate_report`, `close_engagement`
+
+**Use `terminal()` for ALL external tool invocations** (nmap, nuclei, sqlmap, ffuf, dalfox, etc.)
 
 ## pentest-ai MCP Tool Signatures (CRITICAL — do not hallucinate argument names)
 Use EXACTLY these argument names when calling pentest-ai tools:

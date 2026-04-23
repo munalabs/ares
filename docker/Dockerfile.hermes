@@ -66,8 +66,9 @@ RUN pip3 install fastmcp httpx frida frida-tools --break-system-packages \
        done \
     && chmod +x /opt/mcp/frida-server/frida-server-android-*
 
-# ── Playwright MCP ────────────────────────────────────────────────────────────
-RUN npm install -g @playwright/mcp@latest \
+# ── Playwright MCP + gitnexus ─────────────────────────────────────────────────
+# Pre-install both so they don't run npm-install on every gateway startup.
+RUN npm install -g @playwright/mcp@latest gitnexus \
     && npx playwright install chromium \
     && npx playwright install-deps \
     && rm -rf /var/cache/apt/lists/*
@@ -75,8 +76,7 @@ RUN npm install -g @playwright/mcp@latest \
 # ── Profile structure ─────────────────────────────────────────────────────────
 RUN mkdir -p \
     /root/.hermes/profiles/pentest/skills \
-    /root/.hermes/memories \
-    /pentest-output
+    /root/.hermes/memories
 
 COPY SOUL.md   /root/.hermes/profiles/pentest/SOUL.md
 COPY MEMORY.md /root/.hermes/profiles/pentest/MEMORY.md
@@ -99,8 +99,6 @@ ENV API_SERVER_PORT=8643
 EXPOSE 8643
 # Hermes web UI (v0.9.0+) — binds 0.0.0.0 so it's reachable from the host
 EXPOSE 9119
-
-VOLUME ["/pentest-output"]
 
 # Start both the HTTP API gateway and the web UI.
 # Gateway is PID 1 (exec); web UI runs as a background process.

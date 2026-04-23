@@ -38,9 +38,6 @@ EXISTING_ZAP_API_KEY=""
 EXISTING_HERMES_API_KEY=""
 EXISTING_MOBSF_API_KEY=""
 EXISTING_PENTEST_OUTPUT=""
-EXISTING_DISCORD_BOT_TOKEN=""
-EXISTING_DISCORD_ALLOWED_USERS=""
-EXISTING_DISCORD_FREE_RESPONSE_CHANNELS=""
 
 if [[ -f .env && "$ANDROID_ONLY" == "false" ]]; then
     _envval() { grep "^${1}=" .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true; }
@@ -49,9 +46,6 @@ if [[ -f .env && "$ANDROID_ONLY" == "false" ]]; then
     EXISTING_HERMES_API_KEY=$(_envval HERMES_API_KEY)
     EXISTING_MOBSF_API_KEY=$(_envval MOBSF_API_KEY)
     EXISTING_PENTEST_OUTPUT=$(_envval PENTEST_OUTPUT)
-    EXISTING_DISCORD_BOT_TOKEN=$(_envval DISCORD_BOT_TOKEN)
-    EXISTING_DISCORD_ALLOWED_USERS=$(_envval DISCORD_ALLOWED_USERS)
-    EXISTING_DISCORD_FREE_RESPONSE_CHANNELS=$(_envval DISCORD_FREE_RESPONSE_CHANNELS)
     info "Existing .env found — stored values will be used as defaults"
 fi
 
@@ -90,38 +84,6 @@ if [[ "$ANDROID_ONLY" == "false" ]]; then
         [[ "$ANTHROPIC_API_KEY" =~ ^sk-ant- ]] || die "Unexpected key format. Expected sk-ant-oat01-... or sk-ant-api03-..."
     fi
 
-# ── Discord (optional) ────────────────────────────────────────────────────────
-
-    echo
-    DISCORD_BOT_TOKEN=""
-    DISCORD_ALLOWED_USERS=""
-    DISCORD_FREE_RESPONSE_CHANNELS=""
-    DISCORD_ENABLE="n"
-
-    if [[ -n "$EXISTING_DISCORD_BOT_TOKEN" ]]; then
-        # Discord already configured — retain silently
-        DISCORD_ENABLE="y"
-        DISCORD_BOT_TOKEN="$EXISTING_DISCORD_BOT_TOKEN"
-        DISCORD_ALLOWED_USERS="$EXISTING_DISCORD_ALLOWED_USERS"
-        DISCORD_FREE_RESPONSE_CHANNELS="$EXISTING_DISCORD_FREE_RESPONSE_CHANNELS"
-        success "Discord settings retained (existing)"
-    else
-        read -rp "Enable Discord gateway? [y/N] " DISCORD_ENABLE
-        DISCORD_ENABLE="${DISCORD_ENABLE:-n}"
-        if [[ "$DISCORD_ENABLE" =~ ^[Yy]$ ]]; then
-            echo "  Create a Discord bot at https://discord.com/developers/applications"
-            read -rsp "  DISCORD_BOT_TOKEN: "                              DISCORD_BOT_TOKEN;    echo
-            read -rp  "  DISCORD_ALLOWED_USERS (your user ID): "          DISCORD_ALLOWED_USERS
-            read -rp  "  DISCORD_FREE_RESPONSE_CHANNELS (forum channel): " DISCORD_FREE_RESPONSE_CHANNELS
-            [[ -n "$DISCORD_BOT_TOKEN" ]]              || die "DISCORD_BOT_TOKEN cannot be empty."
-            [[ -n "$DISCORD_ALLOWED_USERS" ]]          || die "DISCORD_ALLOWED_USERS cannot be empty."
-            [[ -n "$DISCORD_FREE_RESPONSE_CHANNELS" ]] || die "DISCORD_FREE_RESPONSE_CHANNELS cannot be empty."
-            success "Discord configured"
-        else
-            warn "Discord skipped — Open WebUI only (http://localhost:${WEBUI_PORT:-3000})"
-        fi
-    fi
-
 # ── Output directory ──────────────────────────────────────────────────────────
 
     echo
@@ -153,6 +115,12 @@ fi  # end ANDROID_ONLY==false
 
 HOST_OS="$(uname -s)"    # Darwin | Linux
 HOST_ARCH="$(uname -m)"  # x86_64 | arm64
+
+# On macOS, ensure Homebrew binaries are in PATH (brew install puts them in /opt/homebrew/bin)
+if [[ "$HOST_OS" == "Darwin" ]]; then
+    [[ -d /opt/homebrew/bin ]] && export PATH="/opt/homebrew/bin:$PATH"
+    [[ -d /usr/local/bin    ]] && export PATH="/usr/local/bin:$PATH"
+fi
 
 # Defaults (overridden by detection below)
 ADB_SERIAL_VAL="localhost:5555"
@@ -222,17 +190,21 @@ if [[ "$HOST_OS" == "Darwin" ]]; then
         echo "         Re-run setup.sh after installation."
     fi
 
-    # Frida arch follows chip
+    # Frida arch follows chip.
+    # ADB_SERIAL for Docker containers: the host ADB server reports the emulator as
+    # "emulator-5554" (its native serial), NOT as "127.0.0.1:5555" (the TCP transport
+    # connected on the host). Docker containers always go via the socat→ADB server path,
+    # so they see "emulator-5554". Physical USB devices use the device serial (e.g. R5CN51T95HB).
     if [[ "$HOST_ARCH" == "arm64" ]]; then
         FRIDA_SERVER_ARCH_VAL="arm64"
-        ADB_SERIAL_VAL="127.0.0.1:5555"
+        ADB_SERIAL_VAL="emulator-5554"
         echo
-        info "Platform: macOS Apple Silicon → ARM64 AVD, serial 127.0.0.1:5555 (TCP)"
+        info "Platform: macOS Apple Silicon → ARM64 AVD, serial emulator-5554 (via socat bridge)"
     else
         FRIDA_SERVER_ARCH_VAL="x86_64"
-        ADB_SERIAL_VAL="127.0.0.1:5555"
+        ADB_SERIAL_VAL="emulator-5554"
         echo
-        info "Platform: macOS Intel → x86_64 AVD, serial 127.0.0.1:5555 (TCP)"
+        info "Platform: macOS Intel → x86_64 AVD, serial emulator-5554 (via socat bridge)"
     fi
 
 else
@@ -269,10 +241,11 @@ if [[ "$HOST_OS" == "Darwin" ]]; then
         DOCKER_HOST_IP=$(ifconfig 2>/dev/null \
             | grep -E "inet 192\.168\.64\." | awk '{print $2}' | head -1)
         [[ -n "$DOCKER_HOST_IP" ]] || DOCKER_HOST_IP="192.168.64.1"
-        # Auto-configure for macOS Docker Desktop
+        # Auto-configure for macOS Docker Desktop.
+        # ADB_SERIAL stays as emulator-5554 (set by the architecture block above).
+        # The socat bridge forwards Docker→host ADB; the server reports the native serial.
         ANDROID_ADB_SERVER_HOST_VAL="$DOCKER_HOST_IP"
         ANDROID_ADB_SERVER_PORT_VAL="5038"
-        ADB_SERIAL_VAL="127.0.0.1:5555"
         success "socat found — ADB bridge will use ${DOCKER_HOST_IP}:5038"
     fi
 fi
@@ -336,16 +309,23 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
             warn "socat failed to start — check /tmp/ares-socat.log"
             warn "Manual: socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037"
         fi
-        # Enable TCP on emulator and connect (so ADB server tracks it by TCP serial)
-        if [[ "$ADB_SERIAL_VAL" == "127.0.0.1:5555" ]]; then
-            adb -s emulator-5554 tcpip 5555 2>/dev/null || true
-            sleep 1
-            if adb connect 127.0.0.1:5555 2>/dev/null | grep -q "connected"; then
-                success "ADB: emulator connected at 127.0.0.1:5555"
-            else
-                warn "Emulator not running yet — connect it later:"
-                warn "  adb -s emulator-5554 tcpip 5555 && adb connect 127.0.0.1:5555"
-            fi
+        # Note: adb tcpip is NOT called here. For emulators, Docker containers use
+        # the native emulator-5554 serial via the socat→ADB bridge. Running tcpip
+        # restarts adbd and would kill frida-server if already running.
+
+        # Frida TCP bridge: forward frida-server port 27042 from emulator to host,
+        # then bridge 0.0.0.0:27042 → localhost:27042 so Docker containers can connect.
+        adb -s emulator-5554 forward tcp:27042 tcp:27042 2>/dev/null || true
+        pkill -f "socat.*TCP-LISTEN:27042" 2>/dev/null || true
+        sleep 1
+        nohup socat TCP-LISTEN:27042,reuseaddr,fork TCP:127.0.0.1:27042 \
+            >/tmp/ares-socat-frida.log 2>&1 &
+        FRIDA_SOCAT_PID=$!
+        sleep 1
+        if kill -0 "$FRIDA_SOCAT_PID" 2>/dev/null; then
+            success "socat Frida bridge: 0.0.0.0:27042 → emulator frida-server (PID $FRIDA_SOCAT_PID)"
+        else
+            warn "socat frida bridge failed — check /tmp/ares-socat-frida.log"
         fi
     elif [[ "$HOST_OS" == "Darwin" && "$SOCAT_OK" == "false" ]]; then
         warn "socat not available — ADB MCP will not work until socat is installed."
@@ -373,6 +353,26 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
             if [[ "$EMU_OK" == "false" ]]; then
                 warn "Android Studio SDK not found — install it first (instructions above)."
             else
+                # Auto-detect Android Studio bundled JDK.
+                # macOS ships a /usr/bin/java stub that shows a dialog without a real JVM,
+                # so we cannot rely on `command -v java`. Prefer the bundled JDK
+                # unconditionally — sdkmanager only respects $JAVA_HOME, not PATH.
+                if [[ ! -x "${JAVA_HOME:-}/bin/java" ]]; then
+                    for _jdk in \
+                        "/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+                        "/Applications/Android Studio.app/Contents/jre/Contents/Home" \
+                        "/Applications/Android Studio.app/Contents/jdk/Contents/Home"; do
+                        if [[ -x "$_jdk/bin/java" ]]; then
+                            export JAVA_HOME="$_jdk"
+                            success "Java: $JAVA_HOME (Android Studio bundled JDK)"
+                            break
+                        fi
+                    done
+                fi
+                if [[ ! -x "${JAVA_HOME:-}/bin/java" ]]; then
+                    die "Java not found. Install Android Studio or set JAVA_HOME manually."
+                fi
+
                 [[ "$HOST_ARCH" == "arm64" ]] \
                     && SYS_IMG="system-images;android-34;google_apis;arm64-v8a" \
                     || SYS_IMG="system-images;android-34;google_apis;x86_64"
@@ -411,7 +411,9 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
                 echo -n "  Waiting for emulator to boot"
                 BOOTED=false
                 for i in $(seq 1 60); do
-                    BOOT_PROP=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '[:space:]')
+                    # adb may return non-zero while emulator is starting — suppress exit
+                    BOOT_PROP=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null || true)
+                    BOOT_PROP="${BOOT_PROP//[[:space:]]/}"
                     if [[ "$BOOT_PROP" == "1" ]]; then
                         echo; BOOTED=true; break
                     fi
@@ -419,7 +421,9 @@ if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
                 done
                 if [[ "$BOOTED" == "true" ]]; then
                     success "Emulator booted (PID $EMU_PID)"
-                    ADB_SERIAL_VAL="emulator-5554"
+                    # ADB_SERIAL stays as emulator-5554 — that is the serial the host ADB server
+                    # uses for the emulator, and it's the same serial Docker containers see
+                    # when they connect to the host ADB server via the socat bridge.
                 else
                     echo
                     warn "Emulator still booting — first start can take 2-3 minutes."
@@ -454,10 +458,14 @@ if [[ "$ANDROID_ONLY" == "true" ]]; then
         -e '/^ANDROID_ADB_SERVER_HOST=/d' \
         -e '/^ANDROID_ADB_SERVER_PORT=/d' \
         -e '/^FRIDA_SERVER_ARCH=/d' \
+        -e '/^FRIDA_TCP_HOST=/d' \
+        -e '/^FRIDA_TCP_PORT=/d' \
         -e '/^# ADB_SERIAL=/d' \
         -e '/^# ANDROID_ADB_SERVER_HOST=/d' \
         -e '/^# ANDROID_ADB_SERVER_PORT=/d' \
         -e '/^# FRIDA_SERVER_ARCH=/d' \
+        -e '/^# FRIDA_TCP_HOST=/d' \
+        -e '/^# FRIDA_TCP_PORT=/d' \
         .env && rm -f .env.bak
 
     if [[ "$ADB_ENABLE" =~ ^[Yy]$ ]]; then
@@ -467,19 +475,31 @@ if [[ "$ANDROID_ONLY" == "true" ]]; then
             printf 'ANDROID_ADB_SERVER_PORT=%s\n'    "$ANDROID_ADB_SERVER_PORT_VAL"
             printf 'FRIDA_SERVER_ARCH=%s\n'           "$FRIDA_SERVER_ARCH_VAL"
         } >> .env
+
+        # macOS Docker: frida-server port 27042 is bridged via socat so Docker containers
+        # can connect to frida-server directly over TCP (bypassing ADB device discovery).
+        # FRIDA_TCP_HOST must match the ADB bridge host (same socat setup).
+        if [[ "$HOST_OS" == "Darwin" && "$SOCAT_OK" == "true" ]]; then
+            printf 'FRIDA_TCP_HOST=%s\n' "$ANDROID_ADB_SERVER_HOST_VAL" >> .env
+            printf 'FRIDA_TCP_PORT=27042\n' >> .env
+        fi
+
         success ".env updated"
         if [[ "$HOST_OS" == "Darwin" && "$SOCAT_OK" == "true" ]]; then
             warn "socat proxy will stop when this terminal closes."
             warn "Add to your shell profile for persistence:"
             warn "  nohup socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037 >/tmp/ares-socat.log 2>&1 &"
+            warn "  nohup socat TCP-LISTEN:27042,reuseaddr,fork TCP:127.0.0.1:27042 >/tmp/ares-socat-frida.log 2>&1 &"
         fi
     else
         warn "Android skipped — .env unchanged"
     fi
 
-    info "Restarting ares-hermes to apply new Android settings..."
-    docker compose --project-name ares restart hermes
-    success "ares-hermes restarted"
+    info "Recreating ares-hermes to apply new Android settings..."
+    # `up -d` recreates the container so env_file changes take effect.
+    # `restart` does not reload .env — it only restarts the existing container.
+    docker compose --project-name ares up -d hermes
+    success "ares-hermes recreated"
 
     echo
     echo "────────────────────────────────────────────────────────────"
@@ -517,37 +537,33 @@ fi
 
 docker volume create ares_mobsf-data 2>/dev/null || true
 
-if [[ "$EXISTING_MOBSF_API_KEY" =~ ^[a-fA-F0-9]+$ ]]; then
-    MOBSF_API_KEY="$EXISTING_MOBSF_API_KEY"
-    success "MoBSF API key (reusing existing)"
-    # Still fix ownership in case volume was recreated
-    docker run --rm -v ares_mobsf-data:/data alpine chown -R 9901:9901 /data 2>/dev/null || true
-else
-    info "Starting MoBSF to generate its API key..."
-    docker run --rm -v ares_mobsf-data:/data alpine chown -R 9901:9901 /data
-    docker compose --project-name ares up -d mobsf
+# Always start MoBSF and extract the key directly from the container.
+# Never reuse an existing key from .env — the MoBSF volume may have been
+# recreated with a different secret, making the stored key invalid (401).
+info "Starting MoBSF..."
+docker run --rm -v ares_mobsf-data:/data alpine chown -R 9901:9901 /data
+docker compose --project-name ares up -d mobsf
 
-    # Skip wait if container is somehow already healthy (unlikely on first run)
-    STATUS=$(docker inspect --format='{{.State.Health.Status}}' ares-mobsf 2>/dev/null || echo "none")
-    if [[ "$STATUS" != "healthy" ]]; then
-        echo -n "  Waiting for MoBSF to become healthy"
-        for i in $(seq 1 72); do
-            STATUS=$(docker inspect --format='{{.State.Health.Status}}' ares-mobsf 2>/dev/null || echo "waiting")
-            if [[ "$STATUS" == "healthy" ]]; then
-                echo; break
-            fi
-            echo -n "."; sleep 5
-            if [[ $i -eq 72 ]]; then
-                echo
-                die "MoBSF did not become healthy after 6 minutes. Check: docker logs ares-mobsf"
-            fi
-        done
-    fi
-    success "MoBSF healthy"
+STATUS=$(docker inspect --format='{{.State.Health.Status}}' ares-mobsf 2>/dev/null || echo "none")
+if [[ "$STATUS" != "healthy" ]]; then
+    echo -n "  Waiting for MoBSF to become healthy"
+    for i in $(seq 1 72); do
+        STATUS=$(docker inspect --format='{{.State.Health.Status}}' ares-mobsf 2>/dev/null || echo "waiting")
+        if [[ "$STATUS" == "healthy" ]]; then
+            echo; break
+        fi
+        echo -n "."; sleep 5
+        if [[ $i -eq 72 ]]; then
+            echo
+            die "MoBSF did not become healthy after 6 minutes. Check: docker logs ares-mobsf"
+        fi
+    done
+fi
+success "MoBSF healthy"
 
-    # MoBSF derives its REST API key as sha256(secret_file_contents).
-    # Read and compute directly inside the container — no log parsing needed.
-    MOBSF_API_KEY=$(docker exec ares-mobsf python3 -c "
+# MoBSF derives its REST API key as sha256(secret_file_contents).
+# Read and compute directly inside the container — no log parsing needed.
+MOBSF_API_KEY=$(docker exec ares-mobsf python3 -c "
 import hashlib, sys
 try:
     secret = open('/home/mobsf/.MobSF/secret').read().strip()
@@ -555,11 +571,10 @@ try:
 except Exception as e:
     sys.exit(1)
 " 2>/dev/null) || true
-    [[ -n "$MOBSF_API_KEY" ]] || die "Could not derive MoBSF API key from container. Run: docker exec ares-mobsf cat /home/mobsf/.MobSF/secret"
-    [[ ${#MOBSF_API_KEY} -eq 64 ]] \
-        || die "MoBSF key unexpected length (${#MOBSF_API_KEY} chars): $MOBSF_API_KEY"
-    success "MoBSF API key extracted"
-fi
+[[ -n "$MOBSF_API_KEY" ]] || die "Could not derive MoBSF API key from container. Run: docker exec ares-mobsf cat /home/mobsf/.MobSF/secret"
+[[ ${#MOBSF_API_KEY} -eq 64 ]] \
+    || die "MoBSF key unexpected length (${#MOBSF_API_KEY} chars): $MOBSF_API_KEY"
+success "MoBSF API key extracted"
 
 # ── Write .env ────────────────────────────────────────────────────────────────
 # Use printf '%s' to write each value literally — no shell expansion of user input.
@@ -577,11 +592,6 @@ ENVEOF
     printf '\nANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY"
     printf 'HERMES_STREAM_STALE_TIMEOUT=900\n'
     printf 'GATEWAY_ALLOW_ALL_USERS=true\n'
-    if [[ "$DISCORD_ENABLE" =~ ^[Yy]$ ]]; then
-        printf '\nDISCORD_BOT_TOKEN=%s\n'                 "$DISCORD_BOT_TOKEN"
-        printf 'DISCORD_ALLOWED_USERS=%s\n'               "$DISCORD_ALLOWED_USERS"
-        printf 'DISCORD_FREE_RESPONSE_CHANNELS=%s\n'      "$DISCORD_FREE_RESPONSE_CHANNELS"
-    fi
     printf '\nZAP_API_KEY=%s\n'         "$ZAP_API_KEY"
     printf 'HERMES_API_KEY=%s\n'       "$HERMES_API_KEY"
     printf 'MOBSF_API_KEY=%s\n'        "$MOBSF_API_KEY"
@@ -616,6 +626,13 @@ info "Pulling Open WebUI image..."
 docker pull ghcr.io/open-webui/open-webui:main \
     && success "Open WebUI image ready" \
     || warn "Open WebUI pull failed — will retry on first start"
+
+# ── Ensure pentest output directory exists ────────────────────────────────────
+# Bind-mounted at /pentest-output/ inside hermes and all terminal containers.
+# PENTEST_OUTPUT was set (and the dir created) during the configuration prompts above.
+# Re-confirm it exists in case setup.sh is re-run with --android only.
+[[ -d "$PENTEST_OUTPUT" ]] || mkdir -p "$PENTEST_OUTPUT"
+success "Output directory: $PENTEST_OUTPUT"
 
 # ── Start the full stack ───────────────────────────────────────────────────────
 
@@ -679,7 +696,7 @@ WEBUI_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:${WEBUI_P
     && success "Open WebUI: http://localhost:${WEBUI_PORT:-3000}" \
     || warn    "Open WebUI: not yet reachable ($WEBUI_HTTP)"
 
-MOBSF_HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
+MOBSF_HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Authorization: ${MOBSF_API_KEY}" \
     "http://localhost:8100/api/v1/scans?page=1" 2>/dev/null || echo "unreachable")
 [[ "$MOBSF_HTTP" == "200" ]] \
@@ -691,9 +708,10 @@ echo "────────────────────────�
 echo "  Ares is running."
 echo
 echo "  Web UI:    http://localhost:${WEBUI_PORT:-3000}"
-echo "  Output:    docker volume inspect ares_ares-pentest-output"
+echo "  Output:    ${PENTEST_OUTPUT:-~/ares-pentest-output}  →  /pentest-output/ inside hermes"
+echo "             (reports appear here; drop APKs here for the agent to pick up)"
 echo "  Workspace: ~/ares-workspace/  →  /workspace/ inside hermes"
-echo "             (drop APKs, clone repos, place any files the agent should access)"
+echo "             (source code, large files, anything that isn't pentest output)"
 echo
 echo "  Start an engagement:"
 echo "    Open http://localhost:${WEBUI_PORT:-3000} → new session → send:"

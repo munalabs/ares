@@ -59,6 +59,8 @@ RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.8 \
     && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.6 \
     && go install github.com/projectdiscovery/httpx/cmd/httpx@v1.6.8 \
     && go install github.com/zricethezav/gitleaks/v8@v8.21.2 \
+    && go install github.com/OJ/gobuster/v3@v3.6.0 \
+    && go install github.com/owasp-amass/amass/v4/...@v4.2.0 \
     && nuclei -update-templates 2>/dev/null || true
 
 # ── Playwright (DOM testing + authenticated crawl) ────────────────────────────

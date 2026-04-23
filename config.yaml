@@ -67,8 +67,8 @@ terminal:
   docker_volumes:
     - "${HOME}/pentest-output:/pentest-output"
     - "${HOME}/pentest-output:/home/user/pentest-output"
-  container_cpu: 4
-  container_memory: 16384
+  container_cpu: 2
+  container_memory: 8192
   container_persistent: true
 
 security:
@@ -125,7 +125,7 @@ mcp_servers:
     # iris MCP server
     command: /usr/bin/python3
     args:
-      - /home/YOURUSER/tools/iris/frida.py
+      - /home/YOURUSER/tools/iris/frida_mcp.py
     env:
       PENTEST_OUTPUT: /pentest-output
       ADB_PATH: /usr/lib/android-sdk/platform-tools/adb

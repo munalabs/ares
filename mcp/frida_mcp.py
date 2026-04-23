@@ -20,9 +20,26 @@ from fastmcp import FastMCP
 mcp = FastMCP("frida")
 
 PENTEST_OUTPUT = Path(os.environ.get("PENTEST_OUTPUT", "/pentest-output"))
-FRIDA_SERVER_PATH = os.environ.get("FRIDA_SERVER_PATH", "/home/nico/tools/frida-server/frida-server-android-x86_64")
-ADB = os.environ.get("ADB_PATH", "/usr/lib/android-sdk/platform-tools/adb")
+FRIDA_SERVER_PATH = os.environ.get("FRIDA_SERVER_PATH", "/opt/mcp/frida-server/frida-server-android-x86_64")
+_ADB_BIN = os.environ.get("ADB_PATH", "/usr/lib/android-sdk/platform-tools/adb")
+_ADB_SERVER_HOST = os.environ.get("ANDROID_ADB_SERVER_HOST", "")
+_ADB_SERVER_PORT = os.environ.get("ANDROID_ADB_SERVER_PORT", "")
+_ADB_SERIAL = os.environ.get("ADB_SERIAL", "")
+# Build base adb command with remote server flags when configured
+ADB_BASE: list[str] = [_ADB_BIN]
+if _ADB_SERVER_HOST:
+    ADB_BASE += ["-H", _ADB_SERVER_HOST]
+if _ADB_SERVER_PORT:
+    ADB_BASE += ["-P", _ADB_SERVER_PORT]
+ADB = _ADB_BIN  # kept for path lookups only
 DEFAULT_DEVICE = os.environ.get("FRIDA_DEVICE", "localhost:5555")
+
+# Optional TCP override: if FRIDA_TCP_HOST is set, _get_device() connects to frida-server
+# via TCP instead of ADB. Used in Docker deployments where ADB is on a remote server
+# and frida-server port 27042 is bridged separately (e.g. via socat).
+# When unset, behaviour falls back to the standard ADB/USB device lookup.
+FRIDA_TCP_HOST = os.environ.get("FRIDA_TCP_HOST", "")
+FRIDA_TCP_PORT = int(os.environ.get("FRIDA_TCP_PORT", "27042"))
 
 _executor = ThreadPoolExecutor(max_workers=4)
 
@@ -278,6 +295,16 @@ send(JSON.stringify({type: 'done'}));
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _get_device(serial: Optional[str]) -> frida.core.Device:
+    # TCP override: Docker deployments bridge frida-server port through socat.
+    # Takes priority over all other device lookup methods.
+    if FRIDA_TCP_HOST:
+        mgr = frida.get_device_manager()
+        addr = f"{FRIDA_TCP_HOST}:{FRIDA_TCP_PORT}"
+        try:
+            return mgr.get_device(addr, timeout=3)
+        except Exception:
+            return mgr.add_remote_device(addr)
+
     target = serial or DEFAULT_DEVICE
     if ":" in target:
         mgr = frida.get_device_manager()
@@ -362,9 +389,11 @@ async def _run_script(
     return await loop.run_in_executor(_executor, _blocking)
 
 
-async def _adb_shell(cmd: str) -> str:
+async def _adb_shell(cmd: str, serial: Optional[str] = None) -> str:
+    s = serial or _ADB_SERIAL
+    args = ADB_BASE + (["-s", s] if s else []) + ["shell", cmd]
     proc = await asyncio.create_subprocess_exec(
-        ADB, "shell", cmd,
+        *args,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     out, err = await asyncio.wait_for(proc.communicate(), timeout=15)
@@ -380,7 +409,7 @@ async def setup_frida_server(serial: Optional[str] = None) -> str:
     Detects if already running and skips push if version matches.
     """
     # Check if already running
-    status = await _adb_shell("ps -A | grep frida-server")
+    status = await _adb_shell("ps -A | grep frida-server", serial)
     if "frida-server" in status:
         return f"frida-server already running:\n{status}"
 
@@ -388,26 +417,29 @@ async def setup_frida_server(serial: Optional[str] = None) -> str:
     if not Path(server_bin).exists():
         return f"frida-server binary not found at {server_bin}"
 
+    s = serial or _ADB_SERIAL
+    serial_args = ["-s", s] if s else []
+
     # Push
     proc = await asyncio.create_subprocess_exec(
-        ADB, "push", server_bin, "/data/local/tmp/frida-server",
+        *(ADB_BASE + serial_args + ["push", server_bin, "/data/local/tmp/frida-server"]),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     out, err = await asyncio.wait_for(proc.communicate(), timeout=120)
     if proc.returncode != 0:
         return f"Push failed: {err.decode()}"
 
-    await _adb_shell("chmod +x /data/local/tmp/frida-server")
+    await _adb_shell("chmod +x /data/local/tmp/frida-server", serial)
 
-    # Start in background
+    # Start bound to all interfaces so socat bridge can reach it
     proc2 = await asyncio.create_subprocess_exec(
-        ADB, "shell", "nohup /data/local/tmp/frida-server &>/dev/null &",
+        *(ADB_BASE + serial_args + ["shell", "nohup /data/local/tmp/frida-server -l 0.0.0.0 >/dev/null 2>&1 &"]),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     await asyncio.wait_for(proc2.communicate(), timeout=10)
 
     await asyncio.sleep(2)
-    status2 = await _adb_shell("ps -A | grep frida-server")
+    status2 = await _adb_shell("ps -A | grep frida-server", serial)
 
     return (
         f"frida-server pushed and started\n{out.decode().strip()}\n"
@@ -418,7 +450,7 @@ async def setup_frida_server(serial: Optional[str] = None) -> str:
 @mcp.tool()
 async def check_frida_server(serial: Optional[str] = None) -> str:
     """Check if frida-server is running and reachable from the host."""
-    proc_status = await _adb_shell("ps -A | grep frida-server")
+    proc_status = await _adb_shell("ps -A | grep frida-server", serial)
 
     try:
         def _check():
@@ -446,7 +478,7 @@ async def check_frida_server(serial: Optional[str] = None) -> str:
 @mcp.tool()
 async def stop_frida_server(serial: Optional[str] = None) -> str:
     """Stop the frida-server process on the device."""
-    out = await _adb_shell("pkill -f frida-server; echo $?")
+    out = await _adb_shell("pkill -f frida-server; echo $?", serial)
     return f"frida-server stopped (exit: {out})"
 
 

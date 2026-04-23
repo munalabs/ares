@@ -14,6 +14,7 @@ You send a target URL and credentials. The agent runs a full OWASP WSTG assessme
 - **Attack chains** — correlates individual findings into exploitable end-to-end scenarios with CVSS 4.0 scoring
 - **Detection engineering** — Sigma rules and MITRE ATT&CK Navigator layers for every validated finding
 - **Mobile testing** — static analysis (MoBSF), dynamic instrumentation (Frida SSL unpinning, crypto hooks), device control (ADB)
+- **Burp Pro integration** — optional bridge that exposes all 28 Burp MCP tools (proxy history, repeater, scanner, intruder, collaborator) to the agent via `burp-start.sh`
 - **White-box support** — clone target repos into `~/ares-workspace/`; the agent reads source at `/workspace/` inside all containers
 - **Memory across engagements** — Hindsight extracts findings and patterns after each session, building institutional knowledge over time
 
@@ -21,29 +22,69 @@ You send a target URL and credentials. The agent runs a full OWASP WSTG assessme
 
 ## Architecture
 
-```
-Open WebUI (http://localhost:3000)     Discord Forum Thread
-(multi-engagement, model selector)     (one thread = one engagement)
-              │                                    │
-              └────────────────┬───────────────────┘
-                               ▼
-         Hermes Gateway — pentest profile
-         HTTP API :8643 (OpenAI-compatible) + optional Discord
-                               │
-              ┌────────────────┼────────────────┐
-              ▼                ▼                ▼
-     Claude Sonnet 4.6    Haiku 4.5       Claude Opus 4.6
-     (orchestrator)     (trivial turns,  (deep analysis —
-                         auto-routed)    delegate_task)
-                               │
-              ┌────────────────┼────────────────────────┐
-              ▼                ▼                ▼        ▼
-     MCP: playwright   MCP: pentest-ai   MCP: gitnexus  ...
-     (headless Chrome) (27 scan/exploit  (GitHub source
-                        tools)            analysis)
+```mermaid
+graph TB
+    subgraph UI["User Interfaces"]
+        WEBUI["Open WebUI<br/>http://localhost:3000"]
+        DISCORD["Discord<br/>Forum Thread"]
+    end
 
-     MCP: mobsf        MCP: adb          MCP: frida
-     (static analysis) (device control)  (dynamic instrumentation)
+    subgraph HERMES["ares-hermes container"]
+        GW["Hermes Gateway<br/>HTTP API :8643 · Dashboard :9119"]
+
+        subgraph MODELS["Model Routing"]
+            M1["Sonnet 4.6<br/>orchestrator"]
+            M2["Haiku 4.5<br/>trivial turns"]
+            M3["Opus 4.6<br/>deep analysis"]
+        end
+
+        subgraph MCPS["MCP Servers"]
+            MCP1["playwright<br/>headless Chromium"]
+            MCP2["pentest-ai<br/>27 scan/exploit tools"]
+            MCP3["gitnexus<br/>GitHub source analysis"]
+            MCP4["mobsf MCP"]
+            MCP5["adb MCP"]
+            MCP6["frida MCP"]
+            MCP7["burp MCP<br/>(optional)"]
+        end
+    end
+
+    subgraph BURP["Burp Pro (macOS host, optional)"]
+        BURP_EXT["MCP extension<br/>SSE :9876"]
+        BURP_PROXY["Proxy listener<br/>:8091"]
+        BRIDGE["burp-proxy.py<br/>HTTP bridge :9877"]
+    end
+
+    subgraph TOOLS["ares-tools container (spawned per session)"]
+        T1["nmap · nuclei · nikto"]
+        T2["sqlmap · dalfox · ffuf"]
+        T3["subfinder · httpx · gitleaks"]
+        T4["testssl · sslyze · jwt_tool"]
+    end
+
+    subgraph SERVICES["Always-on Services"]
+        MOBSF["MoBSF :8100<br/>mobile static analysis"]
+        ZAP["OWASP ZAP<br/>spawned per engagement"]
+    end
+
+    subgraph HOST["macOS / Linux Host"]
+        PO["~/ares-pentest-output<br/>→ /pentest-output"]
+        WS["~/ares-workspace<br/>→ /workspace"]
+    end
+
+    WEBUI -->|"OpenAI-compat API"| GW
+    DISCORD -->|"bot gateway"| GW
+    GW --> MODELS
+    M1 -->|"MCP tool calls"| MCPS
+    M1 -->|"terminal()"| TOOLS
+    MCP4 -->|"REST"| MOBSF
+    M1 -->|"REST API via $ZAP_URL"| ZAP
+    MCP7 -->|"Streamable HTTP"| BRIDGE
+    BRIDGE -->|"SSE POST /?sessionId=..."| BURP_EXT
+    HERMES -.->|"bind mount"| PO
+    HERMES -.->|"bind mount"| WS
+    TOOLS -.->|"bind mount"| PO
+    TOOLS -.->|"bind mount"| WS
 ```
 
 **Model routing** is tiered by cost and reasoning requirement:
@@ -55,6 +96,77 @@ Open WebUI (http://localhost:3000)     Discord Forum Thread
 | Haiku 4.5 | Trivial turns | Auto-routed for JSON extraction, format conversions, simple lookups |
 
 This routing cuts cost ~43% vs full Opus without quality loss on tool execution or report writing.
+
+---
+
+## Engagement Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant H as Hermes (Sonnet 4.6)
+    participant T as ares-tools terminal
+    participant Z as ZAP container
+    participant O as Opus 4.6
+    participant P as /pentest-output
+
+    User->>H: target + credentials + scope
+    H->>Z: Phase 0 — spawn per-engagement ZAP
+    H->>T: Phase 1 — nmap, nuclei, subfinder, ffuf
+    T-->>H: open ports, tech stack, endpoints
+    H->>Z: spider + passive scan
+    Z-->>H: alerts, security headers, cookies
+    H->>T: Phases 3-5 — auth, injection, business logic
+    loop per finding
+        T-->>H: raw response
+        H->>H: generate minimal PoC
+        H->>T: execute PoC
+        T-->>H: pass / fail
+        H->>O: confirm finding, score CVSS 4.0
+        O-->>H: validated finding + severity
+        H->>P: write evidence + PoC script
+    end
+    H->>T: Phase 7 — assemble report
+    T->>P: final-report.html + .tar.gz
+    H-->>User: report delivered
+    H->>Z: tear down ZAP container
+```
+
+---
+
+## File Exchange
+
+All three paths — `ares-hermes`, `ares-tools` terminal containers, and the host — share the same two bind-mounted directories. No `docker cp` needed; files appear instantly on both sides.
+
+```mermaid
+graph LR
+    subgraph HOST["macOS / Linux Host"]
+        HO["~/ares-pentest-output/\n(reports, PoCs, evidence)"]
+        HW["~/ares-workspace/\n(APKs, repos, inputs)"]
+    end
+
+    subgraph HERMES["ares-hermes"]
+        HP["/pentest-output/"]
+        HWC["/workspace/"]
+        SOCK["/var/run/docker.sock"]
+    end
+
+    subgraph TOOLS["ares-tools (per session)"]
+        TP["/pentest-output/"]
+        TWC["/workspace/"]
+    end
+
+    HO <-->|"bind mount"| HP
+    HW <-->|"bind mount"| HWC
+    HO <-->|"bind mount"| TP
+    HW <-->|"bind mount"| TWC
+    SOCK -->|"Docker API\n(spawns ares-tools)"| TOOLS
+```
+
+| Directory | Purpose |
+|-----------|---------|
+| `~/ares-pentest-output/` | **Output** — reports, PoC scripts, screenshots, evidence tarballs. Everything the agent writes during an engagement. |
+| `~/ares-workspace/` | **Input / scratch** — drop APKs, clone repos, or place any files the agent needs to read. Also used for agent-to-host handoffs of intermediate files. |
 
 ---
 
@@ -70,6 +182,7 @@ This routing cuts cost ~43% vs full Opus without quality loss on tool execution 
 | [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Headless Chromium — DOM testing, auth crawl | stdio |
 | MCP: mobsf / adb / frida | Mobile testing MCP servers (vendored in `mcp/`) | stdio |
 | `ares-tools` image | Terminal container — all security tools pre-installed | spawned per session |
+| Burp Pro + `burp-proxy.py` | Optional — 28 MCP tools: proxy history, repeater, scanner, intruder, collaborator | host :9876 (Burp), :9877 (bridge) |
 
 **Minimum hardware:** 4 cores, 8GB RAM, 50GB disk, macOS (Docker Desktop) or Linux
 
@@ -122,10 +235,10 @@ This routing cuts cost ~43% vs full Opus without quality loss on tool execution 
 
 ## Output
 
-Every engagement writes to an isolated directory inside the named Docker volume:
+Every engagement writes to an isolated directory bind-mounted to the host:
 
 ```
-/pentest-output/
+~/ares-pentest-output/
   {target-slug}_{YYYYMMDD_HHMMSS}/
     final-report.html           — full technical report, browser-ready
     evidence/
@@ -163,7 +276,7 @@ Open **http://localhost:3000** → select a model → start a new chat → send 
 Answer **y** to the Discord prompt during `setup.sh`, or add to `.env` after setup:
 
 ```bash
-# .env
+# docker/.env
 DISCORD_BOT_TOKEN=your-bot-token
 DISCORD_ALLOWED_USERS=your-discord-user-id
 DISCORD_FREE_RESPONSE_CHANNELS=your-forum-channel-id
@@ -194,69 +307,140 @@ Go.
 
 ### White-box / Local File Access
 
-Hermes and all terminal containers it spawns have `/workspace` bind-mounted from `~/ares-workspace/` on the host. Use it for anything the agent needs direct access to:
+Drop anything into `~/ares-workspace/` on the host — it's immediately visible at `/workspace/` inside hermes and every terminal container it spawns, with no restart required.
 
 ```bash
 # White-box pentest — clone repo locally
 cd ~/ares-workspace && git clone https://github.com/your-org/target-app
-
 # → tell Hermes: "review /workspace/target-app/ for auth issues"
-```
 
-```bash
-# Mobile testing — drop APK locally
+# Mobile testing — drop APK
 cp MyApp.apk ~/ares-workspace/
-
 # → tell Hermes: "analyze /workspace/MyApp.apk with MoBSF"
 ```
-
-Files placed in `~/ares-workspace/` are immediately visible at `/workspace/` without restarting the stack.
 
 ---
 
 ### Mobile Testing (Android)
 
-The ADB MCP server runs inside the `ares-hermes` container and connects to the ADB server running on your host machine — no USB passthrough into Docker required.
+```mermaid
+graph TB
+    subgraph DEVICE["Android Device / Emulator"]
+        FS["frida-server\n0.0.0.0:27042"]
+        ADBD["adbd"]
+    end
 
-**macOS (Android Studio AVD):**
+    subgraph MACOS["macOS Host"]
+        ADBS["ADB server\n127.0.0.1:5037"]
+        FWD["adb forward\ntcp:27042 → tcp:27042"]
+        SC1["socat\n192.168.64.1:5038 → :5037"]
+        SC2["socat\n192.168.64.1:27042 → :27042"]
+    end
 
-```bash
-# Install socat (one-time)
-brew install socat
+    subgraph CONTAINER["ares-hermes container"]
+        ADBC["ADB client\n-H 192.168.64.1 -P 5038\n-s emulator-5554"]
+        FRIDAC["Frida Python\nTCP 192.168.64.1:27042"]
+        MADB["adb MCP"]
+        MFRIDA["frida MCP"]
+    end
 
-# Run once per session (or add to ~/.zshrc for persistence):
-nohup socat TCP-LISTEN:5038,reuseaddr,fork TCP:127.0.0.1:5037 \
-    >/tmp/ares-socat.log 2>&1 &
-
-# Connect your emulator over TCP so Hermes can reach it:
-adb -s emulator-5554 tcpip 5555 && adb connect 127.0.0.1:5555
+    ADBD <-->|USB/network| ADBS
+    ADBS --> FWD
+    FWD <-->|tcp| FS
+    ADBS <--> SC1
+    FWD --> SC2
+    SC1 <-->|Docker Desktop bridge\n192.168.64.1| ADBC
+    SC2 <-->|Docker Desktop bridge\n192.168.64.1| FRIDAC
+    ADBC --> MADB
+    FRIDAC --> MFRIDA
 ```
 
-Then run the automated setup:
+The ADB and Frida MCP servers run inside `ares-hermes` and reach the device via socat bridges on the Docker Desktop VM interface (`192.168.64.1`). No USB passthrough into Docker required.
+
+**Setup (one-time per machine):**
+
 ```bash
+# Install prerequisites
+brew install socat android-platform-tools
+# Install Android Studio → SDK Manager → Android 14 (API 34) + Emulator
+
+# Configure Android + start stack
 cd ares/docker && ./setup.sh --android
 ```
 
-`setup.sh --android` detects your Docker Desktop VM bridge IP (typically `192.168.64.1`), starts the socat proxy, connects the emulator, and writes `ANDROID_ADB_SERVER_HOST`, `ANDROID_ADB_SERVER_PORT`, and `ADB_SERIAL` to `.env`. Run it any time you need to reconfigure Android without rebuilding the stack.
+**Start bridges each session:**
+
+```bash
+cd ares/docker && bash mobile-start.sh          # emulator
+cd ares/docker && bash mobile-start.sh --usb    # USB phone
+```
+
+`mobile-start.sh` starts the emulator (if needed), pushes frida-server, starts socat bridges, and verifies connectivity from inside hermes. Keep the terminal open — bridges stop when it closes.
+
+**Device scenarios:**
+
+| Scenario | `ADB_SERIAL` | Notes |
+|----------|-------------|-------|
+| macOS Android Studio AVD | `emulator-5554` | Serial the ADB server assigns to the emulator |
+| Linux Docker emulator | `localhost:5555` | Docker emulator exposes ADB on port 5555 |
+| USB phone (host) | serial from `adb devices` (e.g. `R58N12345`) | |
+| Wi-Fi / Tailscale phone | `<device-ip>:5555` | |
+
+> **macOS note:** `host.docker.internal` resolves to the Docker VM bridge, not the Mac. `setup.sh --android` detects the correct IP (`192.168.64.1`) automatically.
 
 **Linux (Docker emulator, requires `/dev/kvm`):**
 
 ```bash
 docker compose --project-name ares --profile android up -d
+# View emulator screen at http://localhost:6080
 ```
 
-The `ares-android` container (`budtmo/docker-android`) runs Android 13 with ADB on port 5555 and a VNC screen viewer at `http://localhost:6080`.
+---
 
-**Device scenarios:**
+### Burp Pro Integration (optional)
 
-| Scenario | `ADB_SERIAL` in `.env` |
-|----------|------------------------|
-| macOS Android Studio AVD | `127.0.0.1:5555` (after socat + tcpip setup above) |
-| Linux Docker emulator | `localhost:5555` |
-| USB phone (host) | serial from `adb devices` (e.g. `R58N12345`) |
-| Wi-Fi / Tailscale phone | `<device-ip>:5555` |
+Ares can use Burp Pro's official MCP extension to give the agent direct access to proxy history, Repeater, Intruder, the active scanner, and Collaborator. This is optional — the stack works without Burp.
 
-> **Note:** `host.docker.internal` on macOS Docker Desktop resolves to `172.17.0.1` (the Docker VM bridge), not the Mac. `setup.sh --android` handles this automatically.
+**Transport bridge:** Burp's MCP extension uses an SSE-based transport, while Hermes uses Streamable HTTP. `docker/burp-proxy.py` is a lightweight stdlib-only Python bridge between the two — no extra dependencies required.
+
+**Prerequisites:**
+
+1. Burp Pro running with the MCP extension (BApp Store) on `127.0.0.1:9876`
+2. A Burp proxy listener on `192.168.64.1:8091` (for traffic interception — configure in `Proxy > Listener`)
+
+**Start the integration:**
+
+```bash
+cd ares/docker
+./burp-start.sh
+```
+
+`burp-start.sh` does:
+1. Verifies Burp MCP is reachable on `127.0.0.1:9876`
+2. Optionally checks the proxy listener on `192.168.64.1:8091`
+3. Starts `burp-proxy.py` (SSE↔HTTP bridge on `192.168.64.1:9877`)
+4. Restarts `ares-hermes` so it picks up the Burp MCP server
+
+On the next agent session, 28 Burp tools are registered automatically:
+
+| Tool group | Tools |
+|-----------|-------|
+| HTTP sending | `send_http1_request`, `send_http2_request` |
+| Traffic review | `get_proxy_http_history`, `get_proxy_http_history_regex`, `get_proxy_websocket_history` |
+| Active tools | `create_repeater_tab`, `send_to_intruder` |
+| Scanner | `get_scanner_issues` |
+| Collaborator | `generate_collaborator_payload`, `get_collaborator_interactions` |
+| Config | `output_project_options`, `set_project_options`, `set_proxy_intercept_state` |
+| Encoding | `url_encode`, `url_decode`, `base64_encode`, `base64_decode` |
+
+**Stop:**
+
+```bash
+./burp-start.sh --stop
+```
+
+**Why a custom bridge?**
+Hermes uses Streamable HTTP (POST /) for MCP connections. Burp's MCP extension uses the older SSE transport: `GET /` returns a session endpoint, then `POST /?sessionId=xxx` carries JSON-RPC, and responses arrive back over the SSE stream. The two protocols are incompatible. `burp-proxy.py` maintains a persistent SSE connection to Burp, correlates responses by JSON-RPC `id`, and presents a plain HTTP interface to Hermes.
 
 ---
 
@@ -286,7 +470,6 @@ All tools are pre-installed in the terminal container that Hermes spawns per ses
 | XSS / injection | dalfox, commix |
 | TLS/SSL | sslyze, testssl.sh |
 | Recon | subfinder, httpx |
-| HTTP utils | curl, httpx |
 | Secrets | gitleaks, jwt_tool |
 | Mobile | adb, frida (via MCP) |
 | Wordlists | SecLists common.txt, raft-medium-dirs.txt, api-endpoints.txt |
@@ -296,10 +479,10 @@ All tools are pre-installed in the terminal container that Hermes spawns per ses
 ## Key Design Decisions
 
 **Why Open WebUI?**
-Open WebUI gives a clean multi-conversation UI without requiring a Discord bot. It connects to Hermes's OpenAI-compatible API endpoint (`/v1`), supports multiple simultaneous sessions, and has a model selector for switching between Hermes profiles. No forks, no custom frontend code.
+Clean multi-conversation UI without requiring a Discord bot. Connects to Hermes's OpenAI-compatible API endpoint (`/v1`), supports multiple simultaneous sessions, and has a model selector for switching between profiles. No forks, no custom frontend code.
 
 **Why Hermes?**
-Hermes is a multi-model orchestrator with persistent sessions, skill routing, HTTP API server, and MCP server management. A 100+ turn pentest session exhausts a single Claude conversation context — Hermes handles compression, model routing, and resumption automatically.
+Multi-model orchestrator with persistent sessions, skill routing, HTTP API server, and MCP server management. A 100+ turn pentest session exhausts a single Claude conversation context — Hermes handles compression, model routing, and resumption automatically.
 
 **Why not ZAP MCP?**
 ZAP MCP addon v0.0.1 alpha hardcodes `127.0.0.1` as its bind address and enforces HTTPS. Both `-config` flags to override these are ignored at runtime. Ares uses ZAP via its REST API directly instead.
@@ -310,14 +493,17 @@ A shared ZAP instance accumulates state across engagements — old scan trees, s
 **Why delegate CVSS to Opus?**
 In controlled testing, Sonnet consistently downgraded severity by one tier on auth bypass, mass assignment, and JWT storage findings compared to Opus. CVSS scoring is delegated to Opus with explicit calibration guidance to prevent systematic under-rating.
 
+**Why a custom bridge for Burp MCP instead of using Burp's SSE endpoint directly?**
+Hermes's MCP client (`streamable_http_client` from `mcp` 1.27+) speaks Streamable HTTP only — it POSTs JSON-RPC to `/` and expects a JSON response body. Burp's MCP extension speaks the legacy SSE transport — `GET /` establishes a stream that delivers a `sessionId`, then `POST /?sessionId=xxx` carries requests, and responses come back over the SSE channel asynchronously. The two are wire-incompatible. `burp-proxy.py` handles the SSE channel management and per-request `Queue`-based correlation entirely in ~150 lines of stdlib Python.
+
 **Why socat on macOS instead of `adb -a`?**
-On macOS, Android Studio's ADB daemon respawns immediately and re-locks itself to `127.0.0.1`. The `-a` (listen on all interfaces) flag is silently ignored. socat bridges the Docker Desktop VM network to the Mac's localhost ADB, which works regardless of which process owns the ADB server.
+On macOS, Android Studio's ADB daemon respawns immediately and re-locks itself to `127.0.0.1`. The `-a` flag is silently ignored. socat bridges the Docker Desktop VM network to the Mac's localhost ADB, which works regardless of which process owns the ADB server.
 
 ---
 
 ## Configuration Reference
 
-`docker/config.yaml` — baked into `ares-hermes` at build time. Key settings:
+`docker/config.yaml` is baked into `ares-hermes` at build time. Key settings:
 
 ```yaml
 model:
@@ -338,12 +524,12 @@ terminal:
   docker_image: ares-tools:latest
   container_persistent: true
   docker_volumes:
-    - "ares-pentest-output:/pentest-output"
+    - "${PENTEST_OUTPUT}:/pentest-output"
     - "${WORKSPACE_DIR}:/workspace"
     - "/var/run/docker.sock:/var/run/docker.sock"
 ```
 
-> **Important:** `${VAR:-default}` bash fallback syntax in `config.yaml` is passed as a literal string by Hermes — it does not expand. Use plain `${VAR}` and set defaults in `.env.example`.
+> **Important:** `${VAR:-default}` bash fallback syntax in `config.yaml` is NOT expanded by Hermes — it's passed as a literal string. Use plain `${VAR}` and set all defaults in `.env`.
 
 ---
 
