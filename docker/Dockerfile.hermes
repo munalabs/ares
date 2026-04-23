@@ -84,6 +84,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx \
     && rm /tmp/jadx.zip
 
+# ── uber-apk-signer + debug keystore (Frida Gadget patching) ─────────────────
+# uber-apk-signer handles V1+V2+V3 signing without the full Android SDK build-tools.
+# Debug keystore is pre-generated so inject_frida_gadget works offline.
+ARG UBER_SIGNER_VERSION=1.3.0
+RUN wget -q "https://github.com/patrickfav/uber-apk-signer/releases/download/v${UBER_SIGNER_VERSION}/uber-apk-signer-${UBER_SIGNER_VERSION}.jar" \
+       -O /opt/uber-apk-signer.jar \
+    && keytool -genkey -v \
+       -keystore /opt/debug.keystore \
+       -alias androiddebugkey \
+       -keyalg RSA -keysize 2048 -validity 10000 \
+       -dname "CN=Android Debug,O=Android,C=US" \
+       -storepass android -keypass android -noprompt
+
 # ── Playwright MCP + gitnexus ─────────────────────────────────────────────────
 # Pre-install both so they don't run npm-install on every gateway startup.
 RUN npm install -g @playwright/mcp@latest gitnexus \

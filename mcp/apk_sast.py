@@ -783,5 +783,291 @@ def get_masvs(masvs_id: str) -> str:
     return json.dumps({"id": masvs_id, **ctrl})
 
 
+# ── Frida Gadget helpers ─────────────────────────────────────────────────────
+
+def _get_main_activity(base: Path) -> str:
+    """Return the LAUNCHER activity class name from AndroidManifest.xml."""
+    manifest = base / "AndroidManifest.xml"
+    if not manifest.exists():
+        return ""
+    try:
+        root = ET.parse(manifest).getroot()
+        ns = ANDROID_NS
+        app = root.find("application")
+        if app is None:
+            return ""
+        for activity in app.findall("activity"):
+            for ifilter in activity.findall("intent-filter"):
+                has_main = any(
+                    a.get(f"{{{ns}}}name") == "android.intent.action.MAIN"
+                    for a in ifilter.findall("action")
+                )
+                has_launcher = any(
+                    c.get(f"{{{ns}}}name") == "android.intent.category.LAUNCHER"
+                    for c in ifilter.findall("category")
+                )
+                if has_main and has_launcher:
+                    return activity.get(f"{{{ns}}}name", "")
+    except ET.ParseError:
+        pass
+    return ""
+
+
+def _activity_to_smali(activity_name: str, base: Path) -> "Path | None":
+    """Convert e.g. com.example.MainActivity → Path to its .smali file."""
+    if activity_name.startswith("."):
+        activity_name = _detect_package(base) + activity_name
+    rel = activity_name.replace(".", "/") + ".smali"
+    for smali_d in _smali_dirs(base):
+        candidate = smali_d / rel
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _inject_load_library(smali_path: Path, lib_name: str) -> bool:
+    """
+    Inject System.loadLibrary(lib_name) at the top of onCreate.
+    Handles public, protected, and public final access modifiers.
+    Increments .locals by 1 and uses the new register to avoid conflicts.
+    Returns True if injection succeeded.
+    """
+    content = smali_path.read_text(errors="ignore")
+
+    # Find onCreate — supports public, protected, public final, etc.
+    oncreate_re = re.compile(
+        r"\.method (?:public |protected |private )*onCreate\(Landroid/os/Bundle;\)V"
+    )
+    m = oncreate_re.search(content)
+    if not m:
+        return False
+
+    # Find first .locals N after the method declaration
+    locals_match = re.search(r"[ \t]+\.locals (\d+)", content[m.end():])
+    if not locals_match:
+        return False
+
+    abs_start = m.end() + locals_match.start()
+    abs_end   = m.end() + locals_match.end()
+    n       = int(locals_match.group(1))
+    new_reg = n
+    new_n   = n + 1
+
+    injection = (
+        f"    .locals {new_n}\n"
+        f"\n"
+        f"    const-string v{new_reg}, \"{lib_name}\"\n"
+        f"    invoke-static {{v{new_reg}}}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V\n"
+    )
+    new_content = content[:abs_start] + injection + content[abs_end:]
+    smali_path.write_text(new_content)
+    return True
+
+
+def _download_frida_gadget(version: str, arch: str, lib_dir: Path) -> "Path | None":
+    """Download frida-gadget .so for the given arch into lib_dir."""
+    gadget_path = lib_dir / "libfrida-gadget.so"
+    if gadget_path.exists() and gadget_path.stat().st_size > 0:
+        return gadget_path
+    url = (
+        f"https://github.com/frida/frida/releases/download/{version}/"
+        f"frida-gadget-{version}-android-{arch}.so.xz"
+    )
+    r = subprocess.run(
+        ["bash", "-c", f"curl -fsSL '{url}' | xz -d > '{gadget_path}'"],
+        capture_output=True, timeout=120,
+    )
+    if r.returncode != 0 or not gadget_path.exists() or gadget_path.stat().st_size == 0:
+        gadget_path.unlink(missing_ok=True)
+        return None
+    return gadget_path
+
+
+def _create_gadget_config(gadget_path: Path, mode: str) -> Path:
+    """Write libfrida-gadget.config.so next to the gadget (Frida config convention)."""
+    on_load = "wait" if mode == "network" else "resume"
+    config = {
+        "interaction": {
+            "type": "listen",
+            "address": "127.0.0.1",
+            "port": 27042,
+            "on_load": on_load,
+        }
+    }
+    config_path = gadget_path.parent / "libfrida-gadget.config.so"
+    config_path.write_text(json.dumps(config, indent=2))
+    return config_path
+
+
+def _do_sign_apk(apk_path: Path) -> dict:
+    """Sign an APK with uber-apk-signer and the bundled debug keystore."""
+    signer = Path("/opt/uber-apk-signer.jar")
+    ks      = Path("/opt/debug.keystore")
+    if not signer.exists():
+        return {"error": "uber-apk-signer.jar not found — rebuild ares-hermes image"}
+    if not ks.exists():
+        return {"error": "debug.keystore not found — rebuild ares-hermes image"}
+
+    out_dir = apk_path.parent / "signed"
+    out_dir.mkdir(exist_ok=True)
+
+    r = subprocess.run(
+        [
+            "java", "-jar", str(signer),
+            "-a", str(apk_path),
+            "-o", str(out_dir),
+            "--ks", str(ks),
+            "--ksAlias", "androiddebugkey",
+            "--ksKeyPass", "android",
+            "--ksPass", "android",
+            "--allowResign",
+            "--skipZipAlign",   # built-in zipalign fails on arm64 hosts via emulation
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        return {"error": f"Signing failed: {(r.stderr + r.stdout)[-600:]}"}
+
+    candidates = sorted(out_dir.glob("*.apk"))
+    if not candidates:
+        return {"error": "No signed APK found after signing"}
+    return {"signed_apk": str(candidates[0])}
+
+
+# ── Frida Gadget MCP Tools ───────────────────────────────────────────────────
+
+@mcp.tool()
+def inject_frida_gadget(
+    decompile_dir: str,
+    arch: str = "arm64-v8a",
+    gadget_config_mode: str = "network",
+    frida_version: str = "",
+) -> str:
+    """
+    Inject Frida Gadget into a decompiled APK for dynamic analysis WITHOUT root.
+
+    Use when the device is not rooted (no su, no frida-server).
+    The gadget runs inside the app process — no root required.
+
+    Workflow:
+      1. Download frida-gadget-{version}-android-{arch}.so
+      2. Place in lib/{arch}/ with a gadget config (network listen on :27042)
+      3. Inject System.loadLibrary('frida-gadget') into main activity onCreate
+      4. Repack with apktool b
+      5. Sign with debug keystore (uber-apk-signer, V1+V2+V3)
+
+    After install — connect flow:
+      adb install -r <signed_apk>
+      adb shell am start -n com.package/.MainActivity   # app pauses waiting for Frida
+      adb forward tcp:27042 tcp:27042
+      frida -H 127.0.0.1:27042 -n Gadget -l ssl_bypass.js
+
+    Args:
+      arch: arm64-v8a (physical devices) | x86_64 (emulators) | armeabi-v7a (old)
+      gadget_config_mode: network (listen :27042, app waits) | resume (listen, app continues)
+      frida_version: pin version; defaults to installed frida package version
+
+    Returns: {patched_apk, signed_apk, main_activity, arch, frida_version,
+              install_cmd, connect_cmd}
+    """
+    base = Path(decompile_dir)
+    if not base.exists():
+        return json.dumps({"error": f"decompile_dir not found: {decompile_dir}"})
+
+    # Detect Frida version
+    if not frida_version:
+        r = subprocess.run(["pip3", "show", "frida"], capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            if line.startswith("Version:"):
+                frida_version = line.split(":", 1)[1].strip()
+                break
+    if not frida_version:
+        return json.dumps({"error": "Cannot detect frida version — specify frida_version explicitly"})
+
+    # Find launcher activity
+    main_activity = _get_main_activity(base)
+    if not main_activity:
+        return json.dumps({"error": "No LAUNCHER activity found in manifest"})
+
+    smali_file = _activity_to_smali(main_activity, base)
+    if not smali_file:
+        return json.dumps({"error": f"Smali file not found for activity: {main_activity}"})
+
+    # Place gadget in lib/{arch}/
+    lib_dir = base / "lib" / arch
+    lib_dir.mkdir(parents=True, exist_ok=True)
+
+    gadget_path = _download_frida_gadget(frida_version, arch, lib_dir)
+    if not gadget_path:
+        return json.dumps({
+            "error": f"Failed to download frida-gadget {frida_version} for {arch}. "
+                     f"Check network access and that the version exists on GitHub releases."
+        })
+    gadget_path.chmod(0o755)
+    _create_gadget_config(gadget_path, gadget_config_mode)
+
+    # Inject smali
+    if not _inject_load_library(smali_file, "frida-gadget"):
+        return json.dumps({
+            "error": f"Could not inject loadLibrary into {smali_file.name}. "
+                     f"onCreate not found — try a different activity or inject manually."
+        })
+
+    # Repack
+    out_dir = base.parent
+    patched_apk = out_dir / "app-gadget-patched.apk"
+    r = subprocess.run(
+        ["apktool", "b", str(base), "-o", str(patched_apk), "--use-aapt2"],
+        capture_output=True, text=True, timeout=180,
+    )
+    if r.returncode != 0:
+        r = subprocess.run(
+            ["apktool", "b", str(base), "-o", str(patched_apk)],
+            capture_output=True, text=True, timeout=180,
+        )
+    if r.returncode != 0:
+        return json.dumps({"error": f"apktool build failed: {r.stderr[-600:]}"})
+
+    # Sign
+    signed = _do_sign_apk(patched_apk)
+    if "error" in signed:
+        return json.dumps(signed)
+
+    signed_apk = signed["signed_apk"]
+    package    = _detect_package(base)
+
+    return json.dumps({
+        "patched_apk": str(patched_apk),
+        "signed_apk": signed_apk,
+        "arch": arch,
+        "frida_version": frida_version,
+        "main_activity": main_activity,
+        "smali_patched": str(smali_file.relative_to(base)),
+        "gadget_mode": gadget_config_mode,
+        "install_cmd": f"adb install -r '{signed_apk}'",
+        "connect_cmd": (
+            f"adb shell am start -n {package}/{main_activity} && "
+            f"adb forward tcp:27042 tcp:27042 && "
+            f"frida -H 127.0.0.1:27042 -n Gadget"
+        ),
+        "note": (
+            "on_load=wait: app pauses until Frida connects. "
+            "Attach with frida -H 127.0.0.1:27042 -n Gadget before the app times out."
+            if gadget_config_mode == "network"
+            else "on_load=resume: app starts immediately. Attach any time."
+        ),
+    })
+
+
+@mcp.tool()
+def sign_apk(apk_path: str) -> str:
+    """
+    Sign an APK with the bundled debug keystore (uber-apk-signer, V1+V2+V3 schemes).
+    Use after inject_frida_gadget or any manual APK modification.
+    Returns: {signed_apk}
+    """
+    return json.dumps(_do_sign_apk(Path(apk_path)))
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

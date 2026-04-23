@@ -21,7 +21,7 @@ graph TD
 
     subgraph Core["Hermes Runtime"]
         Gateway[Gateway Service]
-        Agent[Agent Loop\nmax 200 turns]
+        Agent["Agent Loop\nmax 200 turns (configurable)\ncheckpoint/resume support"]
         Compress[Context Compression\nHaiku 4.5]
     end
 
@@ -250,17 +250,24 @@ flowchart TD
 
     ADB --> RootCheck{Rooted?}
 
-    RootCheck -->|No| LimitedDyn["Limited dynamic\n(no Frida)\nADB shell · logcat\ncontent providers\nscreenshot"]
+    RootCheck -->|Yes| Frida["**Frida — Dynamic Instrumentation**\nsetup_frida_server (root)\nbypass_ssl_pinning\nbypass_root_detection\nhook_crypto (30s)\nintercept_http (30s)\nfind_secrets_in_memory\nenumerate_classes"]
 
-    RootCheck -->|Yes| Frida["**Frida — Dynamic Instrumentation**\nsetup_frida_server\nbypass_ssl_pinning\nbypass_root_detection\nhook_crypto (30s)\nintercept_http (30s)\nfind_secrets_in_memory\nenumerate_classes"]
+    RootCheck -->|No| GadgetCheck{APK\navailable?}
+
+    GadgetCheck -->|Yes| Gadget["**Frida Gadget path**\ninject_frida_gadget(arch)\n↓ apktool decompile\n↓ embed libfrida-gadget.so\n↓ patch smali loadLibrary\n↓ repack + sign (uber-apk-signer)\nadb install -r signed.apk\nadb forward tcp:27042\nfrida -H 127.0.0.1:27042 -n Gadget"]
+
+    GadgetCheck -->|No| LimitedDyn["Limited dynamic\n(ADB only)\nlogcat · content providers\nscreenshot · file pull"]
 
     Frida --> CompTest["**Exported Component Testing**\ndump_content_providers\nquery_content_provider\nADB intent → exported activity\nlogcat monitoring"]
+    Gadget --> CompTest
 
     LimitedDyn --> Report
     CompTest --> Report
     StaticOnly --> Report
 
-    Report["**Report**\nStatic findings + MASVS refs\nDynamic findings + evidence\nFrida output (SSL traffic, keys)\nPoC scripts"]
+    Report["**Report**\nStatic findings + MASVS refs\nDynamic findings + evidence\nFrida output (SSL traffic, keys)\nPoC scripts · dry-run guards on destructive PoCs"]
+
+    style Gadget fill:#a72,color:#fff
 ```
 
 ---
