@@ -21,6 +21,9 @@ Prerequisito: muna-agentsdk.
   - Mapear reporte JSON existente al formato `JobResult` de muna-agentsdk
 - [ ] Manejo de errores: publicar `status: failed` con razón si el engagement falla
 - [ ] Heartbeat — señalizar a Argos que el worker está vivo
+  - Frecuencia: cada 30s
+  - Publicar en `jobs.heartbeat` con `{job_id, worker_id, timestamp}`
+  - Argos marca el job como `failed` si no recibe heartbeat en 60s
 
 ---
 
