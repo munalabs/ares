@@ -10,9 +10,13 @@ Prerequisito: muna-agentsdk.
 
 ## Épica 1 — Integración con NATS / Argos
 
-- [ ] Implementar consumer NATS para `jobs.dynamic.pending`
+- [ ] Investigar Hermes webhooks (feature reciente) como mecanismo de trigger interno
+  - Si Hermes expone un webhook endpoint, el NATS consumer puede ser una capa fina que llama a Hermes vía HTTP al recibir un job
+  - Explorar antes de implementar el consumer — puede simplificar la integración significativamente
+- [ ] Implementar consumer NATS para `jobs.dynamic.pending` y `jobs.mobile.pending`
   - Deserializar `JobSpec` de muna-agentsdk
-  - Construir brief de engagement a partir del `DynamicTarget` y `DiffContext`
+  - Construir brief de engagement a partir del target y `DiffContext`
+  - Trigger a Hermes (vía webhook o invocación directa según investigación)
 - [ ] Publicar resultados a `jobs.results` al completar
   - Mapear reporte JSON existente al formato `JobResult` de muna-agentsdk
 - [ ] Manejo de errores: publicar `status: failed` con razón si el engagement falla
@@ -56,11 +60,14 @@ poder enfocar el pentest en lo que cambió.
 
 ---
 
-## Épica 5 — Adoptar muna-agentsdk
+## Épica 5 — Adoptar SDKs del ecosistema
 
 - [ ] Mapear findings de Ares al tipo `Finding` de muna-agentsdk
-- [ ] Adoptar muna-authsdk
-- [ ] Adoptar muna-telemetry — emitir eventos estándar del ecosistema
+- [ ] Adoptar muna-authsdk + Keycloak
+  - Registrar client `ares` en muna-keycloak con `client_credentials`
+- [ ] Adoptar muna-vaultsdk — resolver credenciales de targets desde Vault
+- [ ] Adoptar muna-telemetry — emitir eventos hacia muna-sentinel
+  - `job_started`, `job_completed`, `job_failed`, `finding_emitted`
 
 ---
 
@@ -69,12 +76,13 @@ poder enfocar el pentest en lo que cambió.
 Ares ya tiene soporte parcial para mobile (MoBSF, Frida, ADB). Hay que
 formalizarlo como target type de primera clase en el ecosistema.
 
-- [ ] Extender `DynamicTarget` en muna-agentsdk para soportar:
-  - `MobileTarget`: `platform: Literal["android", "ios"]`, `artifact_url: str`
-  - `artifact_url` apunta a un APK o IPA almacenado (S3, GCS, o URL firmada)
-- [ ] Lancer: tool `analyze_mobile` — sube el artefacto, construye `JobSpec` con `MobileTarget`
-- [ ] Argos: manejar upload y storage temporal del artefacto (URL firmada con TTL)
-- [ ] Ares: consumir `MobileTarget`, rutear internamente a MoBSF + Frida pipeline
+`MobileTarget` es un tipo separado en muna-agentsdk (no extensión de
+DynamicTarget), con `analysis_type: "mobile"` y subject NATS `jobs.mobile.pending`.
+
+- [ ] Consumir `MobileTarget` del `JobSpec` (`analysis_type: "mobile"`)
+  - `artifact_url` es una URL firmada con TTL provista por Argos
+  - Descargar el APK/IPA al inicio del engagement, eliminarlo al terminar
+- [ ] Rutear internamente a MoBSF + Frida pipeline según `platform`
 - [ ] Knowledge base: persistir superficie descubierta por versión de APK/IPA
 - [ ] Modo diff para mobile: dado dos versiones del APK, enfocar en lo que cambió
 
@@ -89,7 +97,8 @@ completamente aislado — red, filesystem, y recursos.
 - [ ] Aislamiento de red por engagement — cada contenedor en su propia red Docker
 - [ ] Límites de CPU y memoria por contenedor de engagement
 - [ ] Queue interna si se supera el límite — jobs esperan sin perderse
-- [ ] Timeout por engagement — si no termina en N horas, marcar como `failed`
+- [ ] Timeout por engagement configurable (default: 4h) — si no termina, marcar como `failed` y notificar a Argos
+  - Debe ser mayor al timeout de job configurado en Argos para el mismo job
 
 ---
 
