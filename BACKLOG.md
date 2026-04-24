@@ -112,6 +112,11 @@ completamente aislado — red, filesystem, y recursos.
 - [ ] Definir límite de engagements paralelos (configurable, default por plan de tenant)
 - [ ] Aislamiento de red por engagement — cada contenedor en su propia red Docker
 - [ ] Límites de CPU y memoria por contenedor de engagement
+- [ ] Límites de concurrencia de red por engagement:
+  - `ulimit -n` (file descriptors): máximo 4096 por contenedor (previene agotamiento de FDs del host)
+  - Rate limiting de conexiones salientes: configurar via `tc` (traffic control) o iptables
+  - Máximo N conexiones simultáneas por herramienta (nmap: 100, sqlmap: 10, ffuf: 50)
+  - Sin estos límites, un engagement puede saturar el uplink del host y afectar a otros tenants
 - [ ] Queue interna si se supera el límite — jobs esperan sin perderse
 - [ ] Timeout por engagement configurable (default: 4h) — si no termina, marcar como `failed` y notificar a Argos
   - Debe ser mayor al timeout de job configurado en Argos para el mismo job
