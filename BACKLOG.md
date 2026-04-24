@@ -88,7 +88,20 @@ DynamicTarget), con `analysis_type: "mobile"` y subject NATS `jobs.mobile.pendin
 
 ---
 
-## Épica 7 — Concurrencia y aislamiento
+## Épica 7 — Scope enforcement en runtime
+
+Durante un engagement, Ares puede descubrir URLs, subdominios, o endpoints
+fuera del scope declarado. Sin enforcement, Ares los atacaría — lo cual puede
+ser ilegal si están fuera del scope del cliente.
+
+- [ ] Implementar scope firewall: toda URL que Ares intente atacar se valida contra `DynamicTarget.scope`
+- [ ] Si la URL está fuera de scope: loguear el hallazgo como "discovered out-of-scope" pero NO atacar
+- [ ] Incluir endpoints out-of-scope en el reporte como hallazgos informativos (no findings de seguridad)
+- [ ] El scope es inmutable durante el engagement — no puede ser modificado por el agente en runtime
+
+---
+
+## Épica 8 — Concurrencia y aislamiento
 
 Ares puede correr múltiples engagements en paralelo pero cada uno debe estar
 completamente aislado — red, filesystem, y recursos.
@@ -102,7 +115,7 @@ completamente aislado — red, filesystem, y recursos.
 
 ---
 
-## Épica 8 — Testing
+## Épica 9 — Testing
 
 Hoy Ares tiene 0 tests unitarios. Mínimo viable para un sistema de seguridad:
 
