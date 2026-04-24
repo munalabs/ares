@@ -126,3 +126,6 @@ Hoy Ares tiene 0 tests unitarios. Mínimo viable para un sistema de seguridad:
 - [ ] Tests del mapeo JobSpec → brief de engagement (web, APK, IPA)
 - [ ] Tests del mapeo reporte JSON → JobResult
 - [ ] Tests del endpoint HTTP trigger
+- [ ] Tests de heartbeat — verificar que se envía bajo condiciones de estrés (engagement largo, carga alta)
+- [ ] Tests de multi-tenancy — verificar que findings y surface de un tenant no son accesibles desde otro
+- [ ] Tests de scope enforcement — verificar que URLs out-of-scope van a `observations`, no a `findings`
