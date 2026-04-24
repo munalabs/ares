@@ -101,6 +101,11 @@ ser ilegal si están fuera del scope del cliente.
 - [ ] Si la URL está fuera de scope: loguear el hallazgo como "discovered out-of-scope" pero NO atacar
 - [ ] Incluir endpoints out-of-scope en el reporte como hallazgos informativos (no findings de seguridad)
 - [ ] El scope es inmutable durante el engagement — no puede ser modificado por el agente en runtime
+- [ ] **Protección SSRF** — bloquear antes de pasar cualquier URL a herramientas de pentest:
+  - IPs privadas: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+  - Loopback: `127.0.0.1`, `::1`
+  - Link-local / metadata cloud: `169.254.0.0/16` (AWS/GCP/Azure metadata)
+  - El scope del cliente declara targets externos — nunca infraestructura interna de Muna
 
 ---
 
