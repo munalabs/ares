@@ -117,6 +117,11 @@ completamente aislado — red, filesystem, y recursos.
 - [ ] Definir límite de engagements paralelos (configurable, default por plan de tenant)
 - [ ] Aislamiento de red por engagement — cada contenedor en su propia red Docker
 - [ ] Límites de CPU y memoria por contenedor de engagement
+- [ ] **`no-new-privileges` flag** — `--security-opt=no-new-privileges:true` en todos los contenedores de engagement. Previene escalación de privilegios via setuid/setgid.
+- [ ] **Seccomp profile específico para Ares** — diferente al de Auspex porque Ares ejecuta herramientas de pentest:
+  - Permitir: `execve` (necesario para nmap, sqlmap, ffuf, etc.), `socket`, `connect`, `sendto`
+  - Bloquear: `mount`, `unshare`, `ptrace`, `reboot`, `kexec_load`
+  - Documentado en `docker/seccomp-ares.json` — distinto de `docker/seccomp-auspex.json`
 - [ ] Límites de concurrencia de red por engagement:
   - `ulimit -n` (file descriptors): máximo 4096 por contenedor (previene agotamiento de FDs del host)
   - Rate limiting de conexiones salientes: configurar via `tc` (traffic control) o iptables
