@@ -2,6 +2,36 @@
 
 ---
 
+## 2026-04-25 — Integration adapter implementado
+
+**Estado: INTEGRADO ✅**
+
+- 26 tests verdes: 11 unit (adapter + auto_config) + 14 endpoint (/engage FastAPI) + 1 integration (NATS real)
+- Hermes existente intacto — el adapter corre como proceso separado
+- Código en `ares/integration/` — microservicio Python independiente
+
+**Lo que está en código (integration):**
+- `adapter.py` — `build_brief()` (JobSpec → texto para Hermes), `read_engagement_result()` (verification state files → JobResult), fallback a `findings-raw.json`, REJECTED filtrados, ESCALATED como `Observation`
+- `hermes_trigger.py` — `SubprocessTrigger` (producción), `MockTrigger` (tests), interfaz abstracta para futura integración con Hermes webhooks
+- `engage.py` — FastAPI: `POST /engage`, `GET /engage/{id}/status`, `GET /engage/{id}/result`, `GET /health`. Watcher background detecta `final-report.html` como señal de completado.
+- `nats_consumer.py` — consumer de `jobs.dynamic.pending` y `jobs.mobile.pending`, llama a `/engage` HTTP, polling con heartbeats, publica a `jobs.results`
+
+**Señal de completado:** `$PENTEST_OUTPUT/{engagement_id}/final-report.html`
+**Config:** `NATS_URL`, `ARES_ENGAGE_URL`, `ARES_MOCK_TRIGGER`, `HERMES_BIN`, `HERMES_PROFILE`, `ARES_PENTEST_OUTPUT`
+
+**Pendiente (segunda fase):**
+- Épica 3: Consulta de Knowledge Base de Argos antes de correr
+- Épica 4: Análisis diferencial refinado (changed_endpoints → scope focalizado)
+- Épica 6: Mobile APK/IPA completo
+- Épica 10: Tests de multi-tenancy y scope enforcement
+
+**Próximos pasos:**
+1. Investigar Hermes webhooks — puede simplificar trigger vs subprocess
+
+**Preguntas abiertas:** ninguna.
+
+---
+
 ## 2026-04-24 — Estado actual post-8 iteraciones de arquitectura
 
 Ver `muna-docs/SESSIONS.md` para el log completo de decisiones.
