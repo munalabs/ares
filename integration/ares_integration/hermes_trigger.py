@@ -85,6 +85,66 @@ class MockTrigger:
         logger.info(f"MockTrigger: engagement dir created at {out}")
 
 
+class DockerExecTrigger:
+    """Trigger Hermes inside a running Docker container via 'docker exec'.
+
+    Used when ares-hermes is a long-running container on the same Docker host
+    as the adapter. The adapter mounts the Docker socket and a shared workspace
+    volume; briefs are written to the shared volume so ares-hermes can read them.
+
+    Environment variables:
+      ARES_HERMES_CONTAINER — container name (default: ares-hermes)
+      ARES_SHARED_WORKSPACE — host path for the shared workspace volume
+                              (default: ~/ares-workspace)
+                              Brief files are written here and read by
+                              ares-hermes at /workspace/<file>.
+    """
+
+    def __init__(
+        self,
+        container: str = "ares-hermes",
+        shared_workspace_host: str | None = None,
+        hermes_bin: str = "hermes",
+        profile: str | None = None,
+    ) -> None:
+        self._container = container
+        # Host path of the shared workspace volume
+        self._workspace_host = Path(
+            shared_workspace_host or os.path.expanduser("~/ares-workspace")
+        )
+        # Path inside the container where the same volume is mounted
+        self._workspace_container = "/workspace"
+        self._bin = hermes_bin
+        self._profile = profile
+
+    def start(self, engagement_id: str, brief: str) -> None:
+        self._workspace_host.mkdir(parents=True, exist_ok=True)
+
+        # Write brief to shared volume — ares-hermes reads it via /workspace/
+        brief_filename = f"{engagement_id}-brief.txt"
+        (self._workspace_host / brief_filename).write_text(brief)
+        brief_in_container = f"{self._workspace_container}/{brief_filename}"
+
+        # Build hermes command to run inside the container
+        cmd = [self._bin]
+        if self._profile:
+            cmd += ["--profile", self._profile]
+        cmd += ["run", "--no-interactive", f"@{brief_in_container}"]
+
+        # Run detached via docker exec (background)
+        log_path = f"{self._workspace_container}/{engagement_id}-hermes.log"
+        shell_cmd = " ".join(cmd) + f" >> {log_path} 2>&1 &"
+
+        subprocess.Popen(
+            ["docker", "exec", self._container, "bash", "-c", shell_cmd],
+            start_new_session=True,
+        )
+        logger.info(
+            f"Hermes triggered via docker exec: container={self._container} "
+            f"engagement={engagement_id} brief={brief_in_container}"
+        )
+
+
 class SSHTrigger:
     """Trigger Hermes on a remote host via SSH.
 
@@ -165,16 +225,34 @@ class SSHTrigger:
 def default_trigger() -> HermesTrigger:
     """Return the trigger configured by environment.
 
-    ARES_TRIGGER=subprocess (default) — local hermes binary
-    ARES_TRIGGER=ssh                  — hermes on remote host via SSH
-    ARES_MOCK_TRIGGER=1               — test stub (no hermes invoked)
+    ARES_TRIGGER=docker (default on muna1)
+      — docker exec ares-hermes hermes run --no-interactive @brief
+      — requires: Docker socket mounted, ares-hermes running, shared workspace volume
+
+    ARES_TRIGGER=subprocess
+      — runs hermes binary locally (bare-metal install or inside ares-hermes itself)
+
+    ARES_TRIGGER=ssh
+      — runs hermes on a remote host via SSH (legacy, used before containerisation)
+
+    ARES_MOCK_TRIGGER=1
+      — test stub, writes files but does not invoke hermes
     """
     if os.getenv("ARES_MOCK_TRIGGER", "0") == "1":
         return MockTrigger()
 
-    trigger_mode = os.getenv("ARES_TRIGGER", "subprocess")
+    trigger_mode = os.getenv("ARES_TRIGGER", "docker")
+
+    if trigger_mode == "docker":
+        return DockerExecTrigger(
+            container=os.getenv("ARES_HERMES_CONTAINER", "ares-hermes"),
+            shared_workspace_host=os.getenv("ARES_SHARED_WORKSPACE"),
+            hermes_bin=os.getenv("HERMES_BIN", "hermes"),
+            profile=os.getenv("HERMES_PROFILE"),
+        )
+
     if trigger_mode == "ssh":
-        host = os.environ["ARES_SSH_HOST"]  # required — fail fast if missing
+        host = os.environ["ARES_SSH_HOST"]
         return SSHTrigger(
             host=host,
             user=os.getenv("ARES_SSH_USER"),
@@ -184,6 +262,8 @@ def default_trigger() -> HermesTrigger:
             profile=os.getenv("HERMES_PROFILE"),
         )
 
-    hermes_bin = os.getenv("HERMES_BIN", "hermes")
-    profile = os.getenv("HERMES_PROFILE")
-    return SubprocessTrigger(hermes_bin=hermes_bin, profile=profile)
+    # subprocess
+    return SubprocessTrigger(
+        hermes_bin=os.getenv("HERMES_BIN", "hermes"),
+        profile=os.getenv("HERMES_PROFILE"),
+    )
