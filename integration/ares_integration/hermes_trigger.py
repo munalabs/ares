@@ -52,7 +52,7 @@ class SubprocessTrigger:
         cmd = [self._bin]
         if self._profile:
             cmd += ["--profile", self._profile]
-        cmd += ["run", "--no-interactive", f"@{brief_file}"]
+        cmd += ["chat", "--yolo", "-q", f"@{brief_file}"]
 
         log_file = self._output_dir / f"{engagement_id}-hermes.log"
 
@@ -129,7 +129,7 @@ class DockerExecTrigger:
         cmd = [self._bin]
         if self._profile:
             cmd += ["--profile", self._profile]
-        cmd += ["run", "--no-interactive", f"@{brief_in_container}"]
+        cmd += ["chat", "--yolo", "-q", f"@{brief_in_container}"]
 
         # Run detached via docker exec (background)
         log_path = f"{self._workspace_container}/{engagement_id}-hermes.log"
