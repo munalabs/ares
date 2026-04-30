@@ -8,6 +8,16 @@ Prerequisito: muna-agentsdk.
 
 ---
 
+## Bugs conocidos / deuda técnica (2026-04-30)
+
+- [ ] **KB 302**: `ARGOS_URL` usa CF Access externo → 302 en fetch de superficie. Cambiar a `http://argos:8000` (red muna-argos interna) en el adapter.
+- [ ] **MoBSF no arranca**: `MOBSF_HOME=None` en el compose env → el container falla el healthcheck y `ares-hermes` no puede arrancar con el compose completo. Fix: pasar `MOBSF_HOME` explícito.
+- [ ] **auth_context requerido**: `DynamicTarget` exige un `VaultRef` UUID válido incluso para targets sin credenciales. Pendiente hacer el campo opcional en muna-agentsdk (workaround actual: UUID placeholder con fecha lejana).
+- [ ] **Consumer single-threaded**: el NATS consumer procesa un job a la vez. Mientras Hermes corre un engagement (hasta 6h), nuevos jobs quedan encolados. Diseño deliberado, documentar el trade-off y considerar task pooling.
+- [ ] **ares-adapter `user: "0"`**: en rootless Docker, container UID 0 = host UID 1000 (dueño del socket). Contra-intuitivo; documentar en el compose y en el README de deploy.
+
+---
+
 ## ✅ Épica 1 — Integración con NATS / Argos
 
 - [ ] Investigar Hermes webhooks (feature reciente) como mecanismo de trigger interno
