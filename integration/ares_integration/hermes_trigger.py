@@ -125,15 +125,16 @@ class DockerExecTrigger:
         (self._workspace_host / brief_filename).write_text(brief)
         brief_in_container = f"{self._workspace_container}/{brief_filename}"
 
-        # Build hermes command to run inside the container
-        cmd = [self._bin]
-        if self._profile:
-            cmd += ["--profile", self._profile]
-        cmd += ["chat", "--yolo", "-q", f"@{brief_in_container}"]
-
-        # Run detached via docker exec (background)
+        # Build hermes command — pass brief content via $(cat ...) shell expansion.
+        # Hermes -q does NOT support @file syntax; it receives the literal string.
         log_path = f"{self._workspace_container}/{engagement_id}-hermes.log"
-        shell_cmd = " ".join(cmd) + f" >> {log_path} 2>&1 &"
+        profile_flag = f"--profile {self._profile}" if self._profile else ""
+        # Single-quoted $(...) inside double-quoted string so bash expands it
+        shell_cmd = (
+            f'{self._bin} {profile_flag} chat --yolo '
+            f'-q "$(cat {brief_in_container})" '
+            f'>> {log_path} 2>&1 &'
+        )
 
         subprocess.Popen(
             ["docker", "exec", self._container, "bash", "-c", shell_cmd],
