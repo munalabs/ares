@@ -1,0 +1,6 @@
+muna-agentsdk
+muna-vaultsdk
+fastapi>=0.136.0
+uvicorn[standard]>=0.46.0
+httpx>=0.28.0
+nats-py>=2.14.0

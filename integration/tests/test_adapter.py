@@ -12,6 +12,7 @@ import pytest
 from muna_vaultsdk import VaultRef
 
 from ares_integration.adapter import (
+    _scope_firewall_section,
     build_brief,
     is_engagement_complete,
     make_error_result,
@@ -230,3 +231,114 @@ def test_make_error_result():
     assert result.error == "Hermes crashed"
     assert result.tenant_id == "tenant-1"
     assert len(result.findings) == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 1: SSRF firewall in brief
+# ---------------------------------------------------------------------------
+
+def test_build_brief_dynamic_includes_scope_firewall():
+    spec = _dynamic_spec()
+    brief = build_brief(spec)
+    assert "SCOPE FIREWALL" in brief
+    assert "10.0.0.0/8" in brief
+    assert "172.16.0.0/12" in brief
+    assert "192.168.0.0/16" in brief
+    assert "127.0.0.1" in brief
+    assert "::1" in brief
+    assert "169.254.0.0/16" in brief
+
+
+def test_build_brief_dynamic_scope_firewall_contains_scope():
+    spec = _dynamic_spec()
+    brief = build_brief(spec)
+    assert "staging.acme.com" in brief
+    # The scope should appear in the firewall section (IMMUTABLE line)
+    assert "IMMUTABLE" in brief
+
+
+def test_build_brief_mobile_no_scope_firewall():
+    """MobileTarget briefs should NOT contain the SSRF firewall section."""
+    spec = _mobile_spec()
+    brief = build_brief(spec)
+    assert "SCOPE FIREWALL" not in brief
+    assert "10.0.0.0/8" not in brief
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Differential scope section
+# ---------------------------------------------------------------------------
+
+def test_build_brief_changed_endpoints_differential_scope():
+    from muna_agentsdk import DiffContext
+    spec = JobSpec(
+        job_id=str(uuid.uuid4()), tenant_id="tenant-test",
+        analysis_type="dynamic",
+        target=DynamicTarget(
+            base_url="https://staging.acme.com", scope="staging.acme.com",
+            auth_context=_vault_ref(),
+        ),
+        requester=IdentityContext(id="l", type="lancer"),
+        sdk_version=SDK_VERSION,
+        budget_remaining_usd=50.0,
+        diff=DiffContext(changed_endpoints=("/api/auth", "/api/users")),
+    )
+    brief = build_brief(spec)
+    assert "DIFFERENTIAL SCOPE" in brief
+    assert "/api/auth" in brief
+    assert "/api/users" in brief
+    # Should also instruct light verification of unchanged surfaces
+    assert "light verification" in brief
+
+
+def test_build_brief_changed_files_differential_scope():
+    from muna_agentsdk import DiffContext
+    spec = JobSpec(
+        job_id=str(uuid.uuid4()), tenant_id="tenant-test",
+        analysis_type="dynamic",
+        target=DynamicTarget(
+            base_url="https://staging.acme.com", scope="staging.acme.com",
+            auth_context=_vault_ref(),
+        ),
+        requester=IdentityContext(id="l", type="lancer"),
+        sdk_version=SDK_VERSION,
+        budget_remaining_usd=50.0,
+        diff=DiffContext(changed_files=("auth/login.py", "api/users.py")),
+    )
+    brief = build_brief(spec)
+    assert "DIFFERENTIAL SCOPE" in brief
+    assert "auth/login.py" in brief
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Prompt injection resistance always present
+# ---------------------------------------------------------------------------
+
+def test_build_brief_dynamic_includes_injection_resistance():
+    spec = _dynamic_spec()
+    brief = build_brief(spec)
+    assert "PROMPT INJECTION DEFENCE" in brief
+    assert "adversarial_server_response" in brief
+
+
+def test_build_brief_mobile_includes_injection_resistance():
+    """Injection resistance section must appear for non-dynamic targets too."""
+    spec = _mobile_spec()
+    brief = build_brief(spec)
+    assert "PROMPT INJECTION DEFENCE" in brief
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (unit): _scope_firewall_section standalone
+# ---------------------------------------------------------------------------
+
+def test_scope_firewall_section_contains_all_blocked_ranges():
+    section = _scope_firewall_section("example.com")
+    assert "10.0.0.0/8" in section
+    assert "172.16.0.0/12" in section
+    assert "192.168.0.0/16" in section
+    assert "127.0.0.1" in section
+    assert "::1" in section
+    assert "169.254.0.0/16" in section
+    assert "example.com" in section
+    assert "IMMUTABLE" in section

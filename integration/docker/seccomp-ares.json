@@ -1,0 +1,33 @@
+{
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [
+    {
+      "names": [
+        "mount",
+        "umount2",
+        "unshare",
+        "pivot_root",
+        "reboot",
+        "kexec_load",
+        "kexec_file_load",
+        "syslog",
+        "init_module",
+        "finit_module",
+        "delete_module",
+        "iopl",
+        "ioperm",
+        "swapon",
+        "swapoff",
+        "settimeofday",
+        "clock_settime",
+        "adjtimex",
+        "sethostname",
+        "setdomainname",
+        "modify_ldt",
+        "setns",
+        "nfsservctl"
+      ],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}

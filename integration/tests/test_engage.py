@@ -168,3 +168,28 @@ async def test_health(client):
     resp = await client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Docker network isolation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_network_isolation_disabled_by_default():
+    """ARES_DOCKER_NETWORK_ISOLATION not set → create_engagement_network returns None."""
+    import os
+    from unittest.mock import patch as _patch
+
+    # Ensure the env var is absent
+    with _patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("ARES_DOCKER_NETWORK_ISOLATION", None)
+        # Re-import to pick up module-level flag (or call with isolation disabled)
+        from ares_integration import docker_network
+        # Temporarily force the flag off (module already loaded with env at import time)
+        original = docker_network._ISOLATION_ENABLED
+        docker_network._ISOLATION_ENABLED = False
+        try:
+            result = await docker_network.create_engagement_network("test-job-id-12345")
+            assert result is None
+        finally:
+            docker_network._ISOLATION_ENABLED = original

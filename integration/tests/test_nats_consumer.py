@@ -176,7 +176,7 @@ async def test_integration_nats_end_to_end(tmp_path):
     import asyncio
     import nats as nats_lib
 
-    nats_url = __import__("os").getenv("NATS_URL", "nats://localhost:4223")
+    nats_url = __import__("os").getenv("NATS_URL", "nats://localhost:4222")
     nc = await nats_lib.connect(nats_url)
     results: list[dict] = []
 
@@ -220,3 +220,24 @@ async def test_integration_nats_end_to_end(tmp_path):
     assert len(results) >= 1
     assert results[0]["job_id"] == job_id
     assert results[0]["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Engagement timeout configurable via ARES_ENGAGEMENT_TIMEOUT_S
+# ---------------------------------------------------------------------------
+
+def test_engagement_timeout_configurable(monkeypatch):
+    """ARES_ENGAGEMENT_TIMEOUT_S env var is reflected in ConsumerConfig."""
+    monkeypatch.setenv("ARES_ENGAGEMENT_TIMEOUT_S", "3600")
+    cfg = ConsumerConfig()
+    assert cfg.engagement_timeout_s == 3600
+
+
+def test_engagement_timeout_default():
+    """ConsumerConfig.engagement_timeout_s defaults to MAX_WAIT_S (21600)."""
+    import os
+    from ares_integration.nats_consumer import MAX_WAIT_S
+    # Ensure no override in env
+    os.environ.pop("ARES_ENGAGEMENT_TIMEOUT_S", None)
+    cfg = ConsumerConfig()
+    assert cfg.engagement_timeout_s == MAX_WAIT_S

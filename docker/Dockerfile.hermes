@@ -34,16 +34,18 @@ RUN curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/
         -o /tmp/hermes-install.sh \
     && bash /tmp/hermes-install.sh || true \
     && rm /tmp/hermes-install.sh \
-    && test -f /root/.hermes/hermes-agent/hermes \
+    && (test -f /usr/local/bin/hermes || test -f /root/.hermes/hermes-agent/hermes) \
     || { echo "ERROR: hermes binary missing after install"; exit 1; }
 
-# Fix shebang — installer may resolve to system python3, missing venv deps
-RUN HERMES_BIN="/root/.hermes/hermes-agent/hermes"; \
-    VENV_PY="/root/.hermes/hermes-agent/venv/bin/python3"; \
-    if head -1 "$HERMES_BIN" | grep -q '/usr/bin/env python3'; then \
-        sed -i "1s|.*|#!${VENV_PY}|" "$HERMES_BIN"; \
+# Normalise hermes binary location — installer uses FHS layout on root Linux:
+#   Code:    /usr/local/lib/hermes-agent
+#   Command: /usr/local/bin/hermes
+# Older installs used /root/.hermes/hermes-agent/hermes.
+# Ensure /usr/local/bin/hermes exists in both cases.
+RUN if [ ! -f /usr/local/bin/hermes ] && [ -f /root/.hermes/hermes-agent/hermes ]; then \
+        ln -sf /root/.hermes/hermes-agent/hermes /usr/local/bin/hermes; \
     fi; \
-    ln -sf "$HERMES_BIN" /root/.local/bin/hermes
+    hermes --version 2>/dev/null || true
 
 # ── pentest-ai MCP server ─────────────────────────────────────────────────────
 # /usr/bin/python3 required — Hermes venv Python lacks aiosqlite + pentest-ai deps

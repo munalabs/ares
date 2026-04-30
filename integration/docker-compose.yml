@@ -1,0 +1,30 @@
+services:
+  nats:
+    image: nats:latest
+    restart: unless-stopped
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8001:8001"
+    env_file: .env
+    environment:
+      NATS_URL: nats://nats:4222
+      ARES_ENGAGE_URL: http://localhost:8001
+    depends_on:
+      - nats
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./docker/seccomp-ares.json
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
